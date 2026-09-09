@@ -10,6 +10,8 @@ import os
 import socket
 import subprocess
 
+import pytest
+
 from analyst_driver.owner import (
     clear_owner,
     owner_path,
@@ -108,6 +110,11 @@ def test_probe_dead_pid_is_dead(tmp_path):
     assert probe_owner(rec)["driver"] == "dead"
 
 
+@pytest.mark.skipif(
+    not os.path.exists(f"/proc/{os.getpid()}/stat"),
+    reason="recycled-pid detection needs /proc; honest None elsewhere (see "
+    "test_write_records_pid_start_on_linux)",
+)
 def test_probe_recycled_pid_is_dead_not_alive():
     """A recycled pid must not resurrect a crashed driver.
 
