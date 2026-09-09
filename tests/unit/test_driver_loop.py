@@ -32,6 +32,7 @@ from analyst_driver.loop import (
     harvest_metrics,
     parse_decision,
     render_brief,
+    render_digest,
 )
 from analyst_driver.owner import read_owner, write_owner
 
@@ -114,9 +115,10 @@ def test_harvest_unwraps_the_real_mcp_double_encoding():
     assert by_name["mcp__ms-inspect__ms_corrected_stats.data.per_field[0].amp_median"]["value"] == (
         0.158563
     )
-    assert by_name["mcp__ms-inspect__ms_corrected_stats.data.per_field[1].phase_rms_deg"][
-        "value"
-    ] == 7.536
+    assert (
+        by_name["mcp__ms-inspect__ms_corrected_stats.data.per_field[1].phase_rms_deg"]["value"]
+        == 7.536
+    )
 
 
 # --------------------------------------------------------- check_citations
@@ -207,6 +209,65 @@ def test_render_brief_default_scope_says_use_your_own_judgement():
     payload = {"data": {"next_recommended_step": "apply_preflag"}}
     brief = render_brief(run, payload, None)
     assert "not declared — use your own judgement" in brief
+
+
+def test_render_brief_belief_state_disabled_is_byte_identical_to_before():
+    """belief_state is opt-in: the disabled path must reproduce today's exact
+    brief, protecting the "off by default, no behavior change" guarantee."""
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    payload = {"data": {"next_recommended_step": "apply_preflag"}}
+    without_kwargs = render_brief(run, payload, None)
+    explicit_none = render_brief(run, payload, None, digest=None, belief_state=None)
+    assert without_kwargs == explicit_none
+    assert "Measured so far" not in without_kwargs
+    assert "belief_state" not in without_kwargs
+
+
+def test_render_brief_belief_state_enabled_shows_digest_and_prior_belief():
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    payload = {"data": {"next_recommended_step": "apply_preflag"}}
+    digest = {
+        "accepted_stages": [{"stage": "import_asdm", "ordinal": 1, "notes": "clean import"}],
+        "metrics": [{"name": "x.flag_fraction", "value": 0.1, "unit": None, "flag": "COMPLETE"}],
+        "artifacts": [],
+    }
+    brief = render_brief(run, payload, None, digest=digest, belief_state="ea09 looks unreliable")
+    assert "Measured so far" in brief
+    assert "import_asdm" in brief
+    assert "x.flag_fraction = 0.1" in brief
+    assert "ea09 looks unreliable" in brief
+    assert '"belief_state"' in brief.lower() or "belief_state" in brief
+
+
+def test_render_brief_belief_state_enabled_first_turn_has_no_prior_belief():
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    payload = {"data": {"next_recommended_step": "apply_preflag"}}
+    digest = {"accepted_stages": [], "metrics": [], "artifacts": []}
+    brief = render_brief(run, payload, None, digest=digest, belief_state=None)
+    assert "none yet" in brief
+
+
+def test_render_digest_reports_no_stages_when_empty():
+    text = render_digest({"accepted_stages": [], "metrics": [], "artifacts": []})
+    assert "none" in text.lower()
+
+
+def test_render_digest_keeps_unavailable_flag_visible():
+    digest = {
+        "accepted_stages": [],
+        "metrics": [
+            {
+                "name": "ms_verify_model.polarization",
+                "value": None,
+                "unit": None,
+                "flag": "UNAVAILABLE",
+            }
+        ],
+        "artifacts": [],
+    }
+    text = render_digest(digest)
+    assert "UNAVAILABLE" in text
+    assert "ms_verify_model.polarization" in text
 
 
 # ------------------------------------------------------------- executors
@@ -428,6 +489,91 @@ def test_one_turn_end_to_end(env, tmp_path):
     assert kinds["caltable"]["size"] is None
     # the brief reached the model
     assert "apply_preflag" in backend.calls[0]
+
+
+# --------------------------------------------------------- belief state, e2e
+
+
+def test_belief_state_disabled_by_default_no_section_no_field(env):
+    """Loop() with no belief_state_enabled kwarg must behave exactly as
+    before — the flag defaults to False."""
+    db, key, workdir = env
+    script = _script(workdir, "exit 0")
+    decision = {"script": str(script), "tool": "ms_apply_preflag", "stage": "apply_preflag"}
+    backend = StubBackend([json.dumps(decision)])
+    loop = Loop(db, backend, LocalExecutor(runner="/bin/sh"), poll_interval=0.01)
+    loop.step(key)
+    assert "Measured so far" not in backend.calls[0]
+    assert (db._run_dir(key) / "belief_state").exists() is False
+
+
+def test_belief_state_enabled_carries_forward_across_turns(env):
+    """Turn 2's brief must contain turn 1's belief_state; turn 1's decision
+    supplies it, and only on an accepted outcome."""
+    db, key, workdir = env
+    script1 = _script(workdir, "exit 0")
+    script2 = _script(workdir, "exit 0")
+    decision1 = {
+        "script": str(script1),
+        "tool": "ms_apply_preflag",
+        "stage": "apply_preflag",
+        "belief_state": "ea09 looks unreliable, exclude from refant list",
+    }
+    decision2 = {
+        "script": str(script2),
+        "tool": "ms_generate_priorcals",
+        "stage": "generate_priorcals",
+        "belief_state": "ea09 confirmed bad; SPW 2 has RFI",
+    }
+    backend = StubBackend([json.dumps(decision1), json.dumps(decision2)])
+    loop = Loop(
+        db,
+        backend,
+        LocalExecutor(runner="/bin/sh"),
+        poll_interval=0.01,
+        belief_state_enabled=True,
+    )
+    loop.step(key)
+    assert db.latest_belief_state(key) == "ea09 looks unreliable, exclude from refant list"
+    loop.step(key)
+    # turn 2's brief carried turn 1's belief forward and asked for a revision
+    assert "ea09 looks unreliable, exclude from refant list" in backend.calls[1]
+    assert "Measured so far" in backend.calls[1]
+    # turn 2's own belief_state is what is now current
+    assert db.latest_belief_state(key) == "ea09 confirmed bad; SPW 2 has RFI"
+    # both versions remain on disk, versioned not overwritten
+    files = sorted((db._run_dir(key) / "belief_state").glob("*.json"))
+    assert len(files) == 2
+
+
+def test_belief_state_missing_from_decision_keeps_the_prior_one(env):
+    """A decision that omits belief_state (older backend, or simply forgot)
+    must not blank out what the previous turn established."""
+    db, key, workdir = env
+    script1 = _script(workdir, "exit 0")
+    script2 = _script(workdir, "exit 0")
+    decision1 = {
+        "script": str(script1),
+        "tool": "ms_apply_preflag",
+        "stage": "apply_preflag",
+        "belief_state": "ea09 looks unreliable",
+    }
+    decision2 = {
+        "script": str(script2),
+        "tool": "ms_generate_priorcals",
+        "stage": "generate_priorcals",
+    }
+    backend = StubBackend([json.dumps(decision1), json.dumps(decision2)])
+    loop = Loop(
+        db,
+        backend,
+        LocalExecutor(runner="/bin/sh"),
+        poll_interval=0.01,
+        belief_state_enabled=True,
+    )
+    loop.step(key)
+    loop.step(key)
+    assert db.latest_belief_state(key) == "ea09 looks unreliable"
 
 
 def test_no_script_is_a_retryable_turn(env):
@@ -886,8 +1032,12 @@ def test_the_brief_carries_free_space(tmp_path):
     from analyst_driver.loop import render_brief
 
     brief = render_brief(
-        {"workdir": str(tmp_path), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
-         "telescope": "EVLA"},
+        {
+            "workdir": str(tmp_path),
+            "ms_path": "/d/x.ms",
+            "input_path": "/d/x.asdm",
+            "telescope": "EVLA",
+        },
         {"data": {}},
         None,
     )
@@ -901,8 +1051,12 @@ def test_the_brief_states_no_threshold_and_no_verdict(tmp_path):
     from analyst_driver.loop import render_brief
 
     brief = render_brief(
-        {"workdir": str(tmp_path), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
-         "telescope": "EVLA"},
+        {
+            "workdir": str(tmp_path),
+            "ms_path": "/d/x.ms",
+            "input_path": "/d/x.asdm",
+            "telescope": "EVLA",
+        },
         {"data": {}},
         None,
     )
@@ -915,8 +1069,12 @@ def test_unreadable_free_space_is_stated_not_omitted(tmp_path):
     from analyst_driver.loop import render_brief
 
     brief = render_brief(
-        {"workdir": str(tmp_path / "gone"), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
-         "telescope": "EVLA"},
+        {
+            "workdir": str(tmp_path / "gone"),
+            "ms_path": "/d/x.ms",
+            "input_path": "/d/x.asdm",
+            "telescope": "EVLA",
+        },
         {"data": {}},
         None,
     )

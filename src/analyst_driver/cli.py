@@ -62,6 +62,13 @@ poll_interval = 60
 #   scope = "full-Stokes calibration + imaging"
 #   scope = "calibration + imaging, prefer MT-MFS nterms=2, use awproject"
 scope = ""
+# Off by default. When true, every brief carries a deterministic digest of
+# what has been measured so far plus the model's own working hypothesis from
+# its previous turn, and the decision JSON is asked for a revised one. Unlike
+# the citation check, there is no measured payload to verify free-text belief
+# against — opt a backend into this once you trust its synthesis, don't
+# assume it is safe for a weaker or local model. See PLAN_BELIEF_STATE.md.
+belief_state = false
 
 [backend]
 # claude | opencode | codex | stub
@@ -153,6 +160,7 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
         max_turns=int(driver_cfg.get("max_turns", 100)),
         poll_interval=float(driver_cfg.get("poll_interval", 60)),
         scope=driver_cfg.get("scope", ""),
+        belief_state_enabled=bool(driver_cfg.get("belief_state", False)),
     )
 
 

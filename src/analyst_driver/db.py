@@ -250,6 +250,9 @@ class DriverDB:
     def _turn_json(self, run_key: str, ordinal: int) -> Path:
         return self._run_dir(run_key) / "turns" / f"{ordinal:04d}.json"
 
+    def _belief_state_json(self, run_key: str, ordinal: int) -> Path:
+        return self._run_dir(run_key) / "belief_state" / f"{ordinal:04d}.json"
+
     @staticmethod
     def _write_json(path: Path, record: dict) -> None:
         """Atomic: write to a temp file in the same directory, then rename."""
@@ -444,6 +447,36 @@ class DriverDB:
             self._demote_previous_accepted(run_key, record["stage"], ordinal)
         return record
 
+    # ------------------------------------------------------- belief state
+    #
+    # Opt-in (PLAN_BELIEF_STATE.md). One file per accepted turn, never
+    # overwritten in place: if a wrong belief introduced at some turn quietly
+    # persists, the diff between two consecutive files is the only way anyone
+    # ever sees it happen. Not indexed into SQLite — nothing here queries
+    # belief state across runs, so it has no row shape to defend, only a
+    # "most recent" read.
+
+    def record_belief_state(self, run_key: str, ordinal: int, text: str) -> None:
+        self._write_json(
+            self._belief_state_json(run_key, ordinal),
+            {"run_key": run_key, "ordinal": ordinal, "belief_state": text},
+        )
+
+    def latest_belief_state(self, run_key: str) -> str | None:
+        """The most recent belief state written for this run, or None.
+
+        None means no turn has written one yet — the first turn of a run
+        with ``belief_state`` enabled, or a run where it has never been
+        enabled. Both look the same to the brief: there is nothing to carry.
+        """
+        d = self._run_dir(run_key) / "belief_state"
+        if not d.is_dir():
+            return None
+        files = sorted(d.glob("[0-9]" * 4 + ".json"))
+        if not files:
+            return None
+        return self._read_json(files[-1]).get("belief_state")
+
     def set_turn_outcome(self, run_key: str, ordinal: int, outcome: str) -> None:
         if outcome not in OUTCOMES:
             raise ValueError(f"outcome must be one of {sorted(OUTCOMES)}, got {outcome!r}")
@@ -602,6 +635,64 @@ class DriverDB:
                 (run_id, turn_id, m["name"], m["value"], m.get("unit"), m.get("flag")),
             )
         self.conn.commit()
+
+    def run_digest(self, run_key: str) -> dict:
+        """The deterministic half of belief state (PLAN_BELIEF_STATE.md §2).
+
+        Everything here is already recorded fact — the accepted turn per
+        stage, the latest value of each named metric, the artifacts produced
+        so far — reshaped for the brief instead of re-derived. No model
+        involvement, so it carries no flag of its own; each metric keeps the
+        completeness flag it was harvested with, including UNAVAILABLE ones,
+        which must not be dropped just because they carry no numeric value.
+        """
+        q = self.conn.execute
+        stages = [
+            {
+                "stage": stage,
+                "ordinal": ordinal,
+                "notes": (json.loads(decision) if decision else {}).get("notes"),
+            }
+            for stage, ordinal, decision in q(
+                "SELECT t.stage, t.ordinal, t.decision FROM turns t"
+                " JOIN runs r ON t.run_id = r.id"
+                " WHERE r.run_key = ? AND t.outcome = 'accepted'"
+                " ORDER BY t.ordinal",
+                (run_key,),
+            ).fetchall()
+        ]
+        # Latest value per metric name: highest turn ordinal wins; a run-level
+        # metric (turn_id NULL) sorts first and is overridden by any later
+        # per-turn measurement of the same name.
+        metrics: dict[str, dict] = {}
+        for name, value, unit, flag, ordinal in q(
+            "SELECT m.name, m.value, m.unit, m.flag, COALESCE(t.ordinal, -1)"
+            " FROM metrics m JOIN runs r ON m.run_id = r.id"
+            " LEFT JOIN turns t ON m.turn_id = t.id"
+            " WHERE r.run_key = ?"
+            " ORDER BY COALESCE(t.ordinal, -1)",
+            (run_key,),
+        ).fetchall():
+            metrics[name] = {
+                "name": name,
+                "value": value,
+                "unit": unit,
+                "flag": flag,
+                "ordinal": ordinal,
+            }
+        artifacts: dict[str, dict] = {}
+        for path, kind, ordinal in q(
+            "SELECT a.path, a.kind, t.ordinal FROM artifacts a"
+            " JOIN turns t ON a.turn_id = t.id JOIN runs r ON t.run_id = r.id"
+            " WHERE r.run_key = ? ORDER BY t.ordinal",
+            (run_key,),
+        ).fetchall():
+            artifacts[path] = {"path": path, "kind": kind, "ordinal": ordinal}
+        return {
+            "accepted_stages": stages,
+            "metrics": list(metrics.values()),
+            "artifacts": list(artifacts.values()),
+        }
 
     # ---------------------------------------------------------------- rebuild
 

@@ -66,3 +66,5 @@ Read each file with the Read tool only when you reach that stage:
 - `11-imaging.md`
 - `12-selfcal.md`
 - `13-postcal-rfi-flagging.md`
+- `14-belief-state.md` (only when the brief shows a "Measured so far" /
+  belief-state section — analyst_driver's optional per-run working hypothesis)

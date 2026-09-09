@@ -491,8 +491,15 @@ def test_turn_records_all_four_token_counts(tmp_path):
     db = DriverDB(tmp_path / "runs")
     key = _make_run(db)
     db.record_turn(
-        key, 1, stage="gaincal", brief="b", decision={}, model="m",
-        tokens_in=26, tokens_cache_read=417313, tokens_cache_creation=31666,
+        key,
+        1,
+        stage="gaincal",
+        brief="b",
+        decision={},
+        model="m",
+        tokens_in=26,
+        tokens_cache_read=417313,
+        tokens_cache_creation=31666,
         tokens_out=4138,
     )
     (row,) = db.conn.execute(
@@ -532,3 +539,147 @@ def test_the_cache_columns_are_added_to_a_database_that_predates_them(tmp_path):
     ).fetchall()
     assert row == (None, None)
     db.close()
+
+
+# ------------------------------------------------------------- belief state
+
+
+def test_latest_belief_state_is_none_before_any_write(db):
+    key = _make_run(db)
+    assert db.latest_belief_state(key) is None
+
+
+def test_belief_state_round_trips(db):
+    key = _make_run(db)
+    db.record_belief_state(key, 1, "ea09 looks unreliable")
+    assert db.latest_belief_state(key) == "ea09 looks unreliable"
+
+
+def test_belief_state_is_versioned_not_overwritten(db):
+    key = _make_run(db)
+    db.record_belief_state(key, 1, "first belief")
+    db.record_belief_state(key, 2, "revised belief")
+    assert db.latest_belief_state(key) == "revised belief"
+    # both versions remain on disk — nothing is overwritten in place
+    files = sorted((db._run_dir(key) / "belief_state").glob("*.json"))
+    assert [f.name for f in files] == ["0001.json", "0002.json"]
+    assert db._read_json(files[0])["belief_state"] == "first belief"
+
+
+def test_belief_state_ordinal_ordering_is_numeric_not_lexical(db):
+    key = _make_run(db)
+    for i in range(1, 12):
+        db.record_belief_state(key, i, f"belief {i}")
+    # 0002 < 0010 lexically too since zero-padded, but this guards the format
+    assert db.latest_belief_state(key) == "belief 11"
+
+
+# -------------------------------------------------------------- run_digest
+
+
+def test_run_digest_empty_run(db):
+    key = _make_run(db)
+    digest = db.run_digest(key)
+    assert digest == {"accepted_stages": [], "metrics": [], "artifacts": []}
+
+
+def test_run_digest_reports_accepted_stage_and_notes(db):
+    key = _make_run(db)
+    db.record_turn(key, 1, stage="apply_preflag", decision={"notes": "used default clip"})
+    db.complete_turn(key, 1, outcome="accepted")
+    digest = db.run_digest(key)
+    assert digest["accepted_stages"] == [
+        {"stage": "apply_preflag", "ordinal": 1, "notes": "used default clip"}
+    ]
+
+
+def test_run_digest_uses_the_accepted_attempt_not_the_failed_one(db):
+    """A retried stage must report the attempt that counted, not the first.
+
+    Mirrors ``_demote_previous_accepted``'s own definition of "the gaincal
+    that counted" — this is the same query shape applied to the digest.
+    """
+    key = _make_run(db)
+    db.record_turn(key, 1, stage="delay_bandpass_gain", decision={"notes": "attempt 1, bad refant"})
+    db.complete_turn(key, 1, outcome="failed")
+    db.record_turn(
+        key, 2, stage="delay_bandpass_gain", decision={"notes": "attempt 2, good refant"}
+    )
+    db.complete_turn(key, 2, outcome="accepted")
+    digest = db.run_digest(key)
+    assert digest["accepted_stages"] == [
+        {"stage": "delay_bandpass_gain", "ordinal": 2, "notes": "attempt 2, good refant"}
+    ]
+
+
+def test_run_digest_keeps_latest_metric_value(db):
+    key = _make_run(db)
+    db.record_turn(key, 1, stage="apply_preflag")
+    db.complete_turn(
+        key,
+        1,
+        outcome="accepted",
+        metrics=[
+            {
+                "name": "ms_flag_summary.flag_fraction",
+                "value": 0.30,
+                "unit": None,
+                "flag": "COMPLETE",
+            }
+        ],
+    )
+    db.record_turn(key, 2, stage="apply_rflag")
+    db.complete_turn(
+        key,
+        2,
+        outcome="accepted",
+        metrics=[
+            {
+                "name": "ms_flag_summary.flag_fraction",
+                "value": 0.12,
+                "unit": None,
+                "flag": "COMPLETE",
+            }
+        ],
+    )
+    digest = db.run_digest(key)
+    [metric] = [m for m in digest["metrics"] if m["name"] == "ms_flag_summary.flag_fraction"]
+    assert metric["value"] == 0.12
+    assert metric["ordinal"] == 2
+
+
+def test_run_digest_keeps_unavailable_metric_not_just_numeric_ones(db):
+    key = _make_run(db)
+    db.record_turn(key, 1, stage="apply_preflag")
+    db.complete_turn(
+        key,
+        1,
+        outcome="accepted",
+        metrics=[
+            {
+                "name": "ms_verify_model.polarization",
+                "value": None,
+                "unit": None,
+                "flag": "UNAVAILABLE",
+            }
+        ],
+    )
+    digest = db.run_digest(key)
+    [metric] = digest["metrics"]
+    assert metric["value"] is None
+    assert metric["flag"] == "UNAVAILABLE"
+
+
+def test_run_digest_lists_artifacts_with_producing_turn(db):
+    key = _make_run(db)
+    db.record_turn(key, 1, stage="delay_bandpass_gain")
+    db.complete_turn(
+        key,
+        1,
+        outcome="accepted",
+        artifacts=[
+            {"path": "gain.G", "kind": "caltable", "size": 100, "checksum": "x", "mtime": 1.0}
+        ],
+    )
+    digest = db.run_digest(key)
+    assert digest["artifacts"] == [{"path": "gain.G", "kind": "caltable", "ordinal": 1}]

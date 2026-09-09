@@ -211,6 +211,17 @@ def check_citations(cited: list[dict], tool_calls: list[dict]) -> list[dict]:
     return out
 
 
+_BELIEF_STATE_SECTION = """\
+Measured so far (from the run's own record, not your prior judgement):
+{digest}
+
+Working hypothesis carried from your previous turn (your own prior synthesis —
+verify it against what is measured above; revise what has moved, keep the
+rest). Consult the belief-state skill for what belongs here:
+{belief_state}
+
+"""
+
 _BRIEF_TEMPLATE = """\
 You are one decision point in a CASA reduction driven by an external loop.
 You decide the single next stage; the loop executes it while you are gone.
@@ -222,7 +233,7 @@ Telescope: {telescope}
 Free space in the work directory: {free_bytes}
 Declared scope for this run: {scope}
 
-Workflow status (ms_workflow_status, measured from disk):
+{belief_state_section}Workflow status (ms_workflow_status, measured from disk):
 {status_json}
 
 Previous turn: {previous}
@@ -251,6 +262,13 @@ Do this, in order:
    Only you can say this: ms_workflow_status reports "selfcal_or_done" and
    cannot tell the two apart. The declared scope is a stated goal, not a
    rule the loop checks — weigh it against what the data actually needs.
+{belief_state_instruction}"""
+
+_BELIEF_STATE_INSTRUCTION = """\
+6. Add a "belief_state" field to the JSON object: your working hypothesis for
+   this run, rewritten in full against what "Measured so far" now shows — not
+   appended to the carried-forward version. See the belief-state skill for
+   what belongs in it and what does not.
 """
 
 
@@ -278,9 +296,49 @@ def _format_bytes(n: int | None) -> str:
     return f"{n} bytes ({n / 1e9:.1f} GB)"
 
 
+def render_digest(digest: dict) -> str:
+    """Format ``DriverDB.run_digest`` for the brief. Pure, no DB access.
+
+    Every metric keeps its completeness flag, including one with no numeric
+    value — an UNAVAILABLE measurement is still a fact worth carrying, and
+    dropping it here would silently upgrade it to "never asked".
+    """
+    lines: list[str] = []
+    stages = digest.get("accepted_stages") or []
+    if stages:
+        lines.append("Stages completed so far:")
+        for s in stages:
+            note = f" — {s['notes']}" if s.get("notes") else ""
+            lines.append(f"  turn {s['ordinal']}: {s['stage']}{note}")
+    else:
+        lines.append("Stages completed so far: none.")
+    metrics = digest.get("metrics") or []
+    if metrics:
+        lines.append("Latest known value of each measured quantity:")
+        for m in metrics:
+            unit = f" {m['unit']}" if m.get("unit") else ""
+            lines.append(f"  {m['name']} = {m.get('value')}{unit} [{m.get('flag')}]")
+    artifacts = digest.get("artifacts") or []
+    if artifacts:
+        lines.append("Artifacts produced so far:")
+        for a in artifacts:
+            lines.append(f"  {a['path']} ({a['kind']}, turn {a['ordinal']})")
+    return "\n".join(lines)
+
+
 def render_brief(
-    run: dict, status_payload: dict, previous_turn: dict | None, scope: str = ""
+    run: dict,
+    status_payload: dict,
+    previous_turn: dict | None,
+    scope: str = "",
+    *,
+    digest: dict | None = None,
+    belief_state: str | None = None,
 ) -> str:
+    """``digest``/``belief_state`` given together, or not at all — the belief
+    section is opt-in (PLAN_BELIEF_STATE.md) and the two are always presented
+    as one reconciliation, not two independent facts.
+    """
     if previous_turn is None:
         previous = "none — this is the first turn."
     else:
@@ -292,6 +350,16 @@ def render_brief(
             f" exit_code={last_job.get('exit_code')}"
             f" logs={last_job.get('log_paths')}"
         )
+    belief_enabled = digest is not None
+    belief_state_section = (
+        _BELIEF_STATE_SECTION.format(
+            digest=render_digest(digest) if digest else "",
+            belief_state=belief_state
+            or "none yet — this is the first turn with belief state enabled.",
+        )
+        if belief_enabled
+        else ""
+    )
     return _BRIEF_TEMPLATE.format(
         input_path=run.get("input_path") or run["ms_path"],
         ms_path=run["ms_path"] or "not imported yet",
@@ -299,6 +367,8 @@ def render_brief(
         telescope=run.get("telescope") or "unknown",
         free_bytes=_format_bytes(free_bytes(run["workdir"])),
         scope=scope or "not declared — use your own judgement",
+        belief_state_section=belief_state_section,
+        belief_state_instruction=_BELIEF_STATE_INSTRUCTION if belief_enabled else "",
         status_json=json.dumps(status_payload, indent=1, sort_keys=True, default=str),
         previous=previous,
     )
@@ -329,6 +399,7 @@ class Loop:
         max_turns: int = 100,
         poll_interval: float = 60.0,
         scope: str = "",
+        belief_state_enabled: bool = False,
     ):
         self.db = db
         self.backend = backend
@@ -336,6 +407,12 @@ class Loop:
         self.max_turns = max_turns
         self.poll_interval = poll_interval
         self.scope = scope
+        # Off by default (PLAN_BELIEF_STATE.md): a capable model can
+        # synthesize a useful working hypothesis, but unlike check_citations
+        # there is no measured payload to verify free-text synthesis against,
+        # so a weaker backend gets nothing to catch a drifting belief. An
+        # operator opts a backend into this, it is not assumed safe for all.
+        self.belief_state_enabled = belief_state_enabled
 
     # sense — ground truth only, no model
     def sense(self, run: dict) -> dict:
@@ -388,7 +465,11 @@ class Loop:
         self, run_key: str, run: dict, last: dict | None, *, block: bool
     ) -> dict:
         status_payload = self.sense(run)
-        brief = render_brief(run, status_payload, last, self.scope)
+        digest = self.db.run_digest(run_key) if self.belief_state_enabled else None
+        prior_belief = self.db.latest_belief_state(run_key) if self.belief_state_enabled else None
+        brief = render_brief(
+            run, status_payload, last, self.scope, digest=digest, belief_state=prior_belief
+        )
         result: BackendResult = self.backend.run(brief, run["workdir"])
         decision = parse_decision(result.text or "")
         ordinal = self.db.next_ordinal(run_key)
@@ -525,6 +606,15 @@ class Loop:
             wall_time_s=_wall_time(job.get("submitted_at"), job.get("finished_at")),
         )
         self._adopt_ms(run_key, artifacts)
+        if outcome == "accepted" and self.belief_state_enabled:
+            belief = decision.get("belief_state")
+            # A missing field is not the same as an empty belief: the model
+            # may simply not have written one this turn (e.g. an older
+            # backend, or a decision that predates the instruction). Leave
+            # the prior belief as the most recent one rather than recording
+            # a blank that would read as "nothing is known" to the next turn.
+            if isinstance(belief, str) and belief.strip():
+                self.db.record_belief_state(run_key, turn["ordinal"], belief)
         set_owner_job(self.db._run_dir(run_key), None)
         return {
             "action": "completed",

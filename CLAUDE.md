@@ -528,6 +528,7 @@ The skill is split into focused files to stay under the 200-line context limit:
 | `11-imaging.md` | First-pass continuum/cube imaging with derived tclean parameters and ms_image_stats gate |
 | `12-selfcal.md` | Single-pass phase selfcal with before/after DR comparison and stop-and-recommend gate |
 | `13-postcal-rfi-flagging.md` | Post-cal RFI flagging on target/phase cal + SpW severity triage (drop vs salvage), thresholds read off the dataset's own distribution |
+| `14-belief-state.md` | analyst_driver's optional per-run working hypothesis: what to carry across turns as judgment vs. what the deterministic digest already covers |
 
 ### MS simulator
 
