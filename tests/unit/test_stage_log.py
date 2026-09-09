@@ -201,8 +201,14 @@ def test_a_none_valued_measurement_survives_the_round_trip(tmp_path):
 
 def test_completed_stages_ignores_the_measurement(tmp_path):
     """A stage that ran and changed nothing still ran."""
-    entries = [{"stage": "rflag", "product": "/w/t.ms", "exists": True,
-                "measurement": {"flagged_fraction": 0.0}}]
+    entries = [
+        {
+            "stage": "rflag",
+            "product": "/w/t.ms",
+            "exists": True,
+            "measurement": {"flagged_fraction": 0.0},
+        }
+    ]
     assert stage_log.completed_stages(entries) == {"rflag"}
 
 

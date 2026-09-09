@@ -133,8 +133,12 @@ def _log(workdir, *stages, product="/w/thing"):
         for stage in stages:
             fh.write(
                 json.dumps(
-                    {"stage": stage, "product": product, "at": "2026-09-02T00:00:00Z",
-                     "exists": True}
+                    {
+                        "stage": stage,
+                        "product": product,
+                        "at": "2026-09-02T00:00:00Z",
+                        "exists": True,
+                    }
                 )
                 + "\n"
             )
@@ -289,8 +293,15 @@ def test_a_stage_recorded_only_as_failed_does_not_count(fake_ms, monkeypatch):
     monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
     _log(workdir, "set_intents")
     (workdir / STAGE_LOG_NAME).open("a").write(
-        json.dumps({"stage": "preflag", "product": "/w/calibrators.ms", "exists": False,
-                    "error": "product not found"}) + "\n"
+        json.dumps(
+            {
+                "stage": "preflag",
+                "product": "/w/calibrators.ms",
+                "exists": False,
+                "error": "product not found",
+            }
+        )
+        + "\n"
     )
 
     result = _run(ms, workdir)
@@ -304,8 +315,18 @@ def test_disagreement_between_log_and_ms_is_reported_not_resolved(fake_ms, monke
     ms, workdir = fake_ms
     (ms / "STATE").mkdir()
     monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass",
-         "initial_rflag", "gaincal", "bandpass", "fluxscale", "applycal")
+    _log(
+        workdir,
+        "set_intents",
+        "preflag",
+        "priorcals",
+        "initial_bandpass",
+        "initial_rflag",
+        "gaincal",
+        "bandpass",
+        "fluxscale",
+        "applycal",
+    )
 
     result = _run(ms, workdir)
     assert any(

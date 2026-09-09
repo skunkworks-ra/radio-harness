@@ -152,7 +152,7 @@ def test_the_ban_applies_without_any_configuration():
 
 
 def test_an_explicit_empty_list_turns_the_ban_off(g55_init_event):
-    """"Not specified" and "no ban" are different. Silently upgrading the
+    """ "Not specified" and "no ban" are different. Silently upgrading the
     second to the first would make the flag impossible to switch off."""
     backend = ClaudeBackend(disallowed_tools=[])
     assert "--disallowedTools" not in backend._args()
@@ -204,8 +204,16 @@ def test_total_is_none_when_no_input_counts_are_reported():
 def test_total_counts_a_reported_zero(g55_result_event):
     """A backend that genuinely reports zero uncached input must not be
     confused with one that reports nothing."""
-    raw = json.dumps({"type": "result", "result": "x",
-                      "usage": {"input_tokens": 0, "cache_read_input_tokens": 100}}) + "\n"
+    raw = (
+        json.dumps(
+            {
+                "type": "result",
+                "result": "x",
+                "usage": {"input_tokens": 0, "cache_read_input_tokens": 100},
+            }
+        )
+        + "\n"
+    )
     res = ClaudeBackend.parse(raw)
     assert res.total_tokens_in == 100
 

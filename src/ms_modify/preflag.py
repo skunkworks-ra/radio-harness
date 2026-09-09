@@ -176,9 +176,7 @@ def run(
     )
 
     # Always write the script
-    script_content = _build_script(
-        ms_str, cmds_path, cal_ms, cal_fields, workdir=str(workdir_path)
-    )
+    script_content = _build_script(ms_str, cmds_path, cal_ms, cal_fields, workdir=str(workdir_path))
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 

@@ -13,6 +13,16 @@ Three MCP servers expose the full tool suite:
 Built on [casatools](https://casa.nrao.edu/) and the
 [Model Context Protocol](https://modelcontextprotocol.io/).
 
+On top of the tool suite, `src/analyst_driver/` is an external loop that drives
+a full reduction turn by turn without a human or a long-lived agent session
+attached: it senses run state from disk (`ms_workflow_status`, prior job exit
+codes), asks an LLM backend for one decision (a generated calibration script,
+`execute=False`), dispatches that script through a pluggable executor (local /
+SLURM / HTCondor), and records the outcome to a SQLite journal before starting
+the next turn from ground truth. The model and the loop never run at the same
+time — a `tclean` can run for hours without holding a session open. See
+[`PLAN.md`](PLAN.md) for the full design and status.
+
 ---
 
 ## Installation
@@ -49,7 +59,7 @@ directly against the local pixi environment — no plugin system involved.
 git clone https://github.com/skunkworks-ra/radio-analyst.git
 cd radio-analyst
 pixi install
-pixi run pip install casatools casatasks   # first time only; ~500 MB
+pixi run pip install casatools==6.7.0.31 casatasks==6.7.0.31   # first time only; ~500 MB
 pixi run install-mcp
 ```
 
@@ -73,7 +83,7 @@ Clone the repo, install the environment, then start the servers in HTTP mode:
 ```bash
 git clone https://github.com/skunkworks-ra/radio-analyst.git
 cd radio-analyst
-pixi install && pixi run pip install casatools casatasks
+pixi install && pixi run pip install casatools==6.7.0.31 casatasks==6.7.0.31
 
 # Inspection server (port 8000)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve

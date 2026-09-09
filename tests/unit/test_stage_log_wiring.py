@@ -55,9 +55,7 @@ def _record_calls(tree) -> list[ast.Call]:
     return [
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id == "_record_stage"
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_record_stage"
     ]
 
 
@@ -386,9 +384,7 @@ def test_applycal_measures_the_column_it_exists_to_populate(ms_and_workdir, tmp_
         )
     )
     assert _measurements(script) == [{"field": "0", "corrected_data": "_corrected"}]
-    assert _module_level_index(script, "applycal") < _module_level_index(
-        script, "_record_stage"
-    )
+    assert _module_level_index(script, "applycal") < _module_level_index(script, "_record_stage")
 
 
 def test_applycal_script_stops_when_corrected_data_is_absent(ms_and_workdir, tmp_path):
@@ -410,8 +406,7 @@ def test_applycal_script_stops_when_corrected_data_is_absent(ms_and_workdir, tmp
     top = [
         n
         for n in ast.parse(script).body
-        if isinstance(n, ast.If)
-        and any(isinstance(b, ast.Raise) for b in n.body)
+        if isinstance(n, ast.If) and any(isinstance(b, ast.Raise) for b in n.body)
     ]
     assert len(top) == 1
     assert getattr(top[0].test, "op", None).__class__ is ast.Not
@@ -421,9 +416,7 @@ def test_setjy_measures_model_data(tmp_path):
     """_build_script directly: the run() path needs a real FIELD subtable."""
     from ms_modify.setjy import _build_script
 
-    script = _build_script(
-        "/data/x.ms", str(tmp_path), ["3C147"], "Perley-Butler 2017", True, []
-    )
+    script = _build_script("/data/x.ms", str(tmp_path), ["3C147"], "Perley-Butler 2017", True, [])
     keys = [set(m) for m in _measurements(script)]
     assert keys == [{"model_data", "usescratch"}]
 
@@ -436,9 +429,7 @@ def test_rflag_measures_the_flagged_fraction(ms_and_workdir):
         run(ms_path=str(ms), field="0", spw="", workdir=str(wd), datacolumn="corrected")
     )
     assert _measurements(script) == [{"flagged_fraction": "_flagged"}]
-    assert _module_level_index(script, "flagdata") < _module_level_index(
-        script, "_record_stage"
-    )
+    assert _module_level_index(script, "flagdata") < _module_level_index(script, "_record_stage")
 
 
 def test_preflag_uses_the_raising_form_for_calibrators_ms_only(ms_and_workdir, tmp_path):
@@ -492,7 +483,8 @@ def test_applycal_emitted_code_runs_records_and_raises(tmp_path):
         for n in tree.body
         if not (isinstance(n, ast.ImportFrom) and n.module == "casatasks")
         and not (
-            isinstance(n, ast.Expr) and getattr(getattr(n.value, "func", None), "id", "") == "applycal"
+            isinstance(n, ast.Expr)
+            and getattr(getattr(n.value, "func", None), "id", "") == "applycal"
         )
     ]
     module = ast.fix_missing_locations(ast.Module(body=keep, type_ignores=[]))
@@ -625,18 +617,23 @@ def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path, monk
     online.write_text("")
     common = dict(ms_path=str(ms), workdir=str(wd))
     results = {
-        "gaincal": lambda: gaincal.run(field="0", spw="", caltable=str(wd / "g1.G"),
-                                       refant="ea01", **common),
-        "bandpass": lambda: bandpass.run(field="0", spw="", caltable=str(wd / "b1.B"),
-                                         refant="ea01", **common),
-        "polcal": lambda: polcal.run(field="0", caltable=str(wd / "p1.D"),
-                                     poltype="Df", refant="ea01", **common),
+        "gaincal": lambda: gaincal.run(
+            field="0", spw="", caltable=str(wd / "g1.G"), refant="ea01", **common
+        ),
+        "bandpass": lambda: bandpass.run(
+            field="0", spw="", caltable=str(wd / "b1.B"), refant="ea01", **common
+        ),
+        "polcal": lambda: polcal.run(
+            field="0", caltable=str(wd / "p1.D"), poltype="Df", refant="ea01", **common
+        ),
         "initial_bandpass": lambda: initial_bandpass.run(
-            bp_field="0", applycal_field="0", ref_ant="ea01", bp_scan="3", **common),
+            bp_field="0", applycal_field="0", ref_ant="ea01", bp_scan="3", **common
+        ),
         "priorcals": lambda: priorcals.run(**common),
         "preflag": lambda: preflag.run(cal_fields="0", online_flag_file=str(online), **common),
-        "applycal": lambda: applycal.run(field="0", gaintable=[ct], gainfield=[""],
-                                         interp=["linear"], **common),
+        "applycal": lambda: applycal.run(
+            field="0", gaintable=[ct], gainfield=[""], interp=["linear"], **common
+        ),
         "rflag": lambda: rflag.run(field="0", spw="", datacolumn="corrected", **common),
         "initial_rflag": lambda: initial_rflag.run(field="0", **common),
         "postcal_flag": lambda: postcal_flag.run(field="0", **common),

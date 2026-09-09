@@ -168,7 +168,9 @@ def run(ms_path: str, workdir: str) -> dict:
     if corrected_target_error is not None:
         warnings.append(f"Target MS MAIN table could not be read: {corrected_target_error}")
     if corrected_calibrators_error is not None:
-        warnings.append(f"calibrators.ms MAIN table could not be read: {corrected_calibrators_error}")
+        warnings.append(
+            f"calibrators.ms MAIN table could not be read: {corrected_calibrators_error}"
+        )
 
     # The log is history and the MS is now. Where they disagree, say so rather
     # than pick a winner: a stage recorded complete whose product no longer
