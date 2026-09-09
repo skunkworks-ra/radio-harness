@@ -1,27 +1,31 @@
-# radio-analyst
+# radio-harness
 
-MCP servers, skills, and slash commands for AI-assisted radio interferometric
-data reduction. Targets VLA/JVLA/EVLA, MeerKAT, and uGMRT observations stored
-as CASA Measurement Sets.
+`analyst_driver` is an external loop that drives a full CASA reduction turn by
+turn, with no human and no long-lived agent session attached: it senses run
+state from disk (`ms_workflow_status`, prior job exit codes), asks an LLM
+backend for one decision (a generated calibration script, `execute=False`),
+dispatches that script through a pluggable executor (local / SLURM /
+HTCondor), and records the outcome to a SQLite journal before starting the
+next turn from ground truth. The model and the loop never run at the same
+time — a `tclean` can run for hours without holding a session open. See
+[`PLAN.md`](PLAN.md) for the full design and status.
 
-Three MCP servers expose the full tool suite:
+The harness drives the reduction; it never reasons about the science itself.
+That reasoning — what a number means, what solint to use, when a run is done —
+lives in **radio-analyst**: the MCP servers and skills this repo builds on:
 
 - **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
+- the `radio-interferometry` and `ms-simulator` skills under `.claude/skills/`
 
 Built on [casatools](https://casa.nrao.edu/) and the
-[Model Context Protocol](https://modelcontextprotocol.io/).
-
-On top of the tool suite, `src/analyst_driver/` is an external loop that drives
-a full reduction turn by turn without a human or a long-lived agent session
-attached: it senses run state from disk (`ms_workflow_status`, prior job exit
-codes), asks an LLM backend for one decision (a generated calibration script,
-`execute=False`), dispatches that script through a pluggable executor (local /
-SLURM / HTCondor), and records the outcome to a SQLite journal before starting
-the next turn from ground truth. The model and the loop never run at the same
-time — a `tclean` can run for hours without holding a session open. See
-[`PLAN.md`](PLAN.md) for the full design and status.
+[Model Context Protocol](https://modelcontextprotocol.io/). Today that tool
+suite is vendored in-tree under `src/ms_inspect/`, `src/ms_modify/`, and
+`src/ms_create/` rather than pulled in as an external dependency — the
+`plugin.json`/`marketplace.json` manifests still name the package
+`radio-analyst` for that reason. The driver (`src/analyst_driver/`) is what
+this repo actually exists to develop.
 
 ---
 
