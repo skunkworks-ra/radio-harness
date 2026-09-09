@@ -20,7 +20,11 @@ Three probe answers, and the difference between the last two is load-bearing:
               here, so we never call it dead.
 
 The pid start time defeats pid reuse. Without it a recycled pid reports a
-crashed driver as alive, and the run can never be resumed.
+crashed driver as alive, and the run can never be resumed. Drivers run on
+both Linux and macOS (no ``/proc`` there), so the start-time check has two
+backends: ``/proc/<pid>/stat`` on Linux, ``ps -o lstart=`` elsewhere. The
+value is opaque outside this module — an int on Linux, a string on macOS —
+and is only ever compared for equality, never parsed as a timestamp.
 
 SLURM is reported separately, not folded into the driver answer. A job that
 outlives its driver is normal for ``executor = "slurm"``, and ``sacct`` is
@@ -32,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -45,8 +50,7 @@ def _proc_start_ticks(pid: int) -> int | None:
 
     The comm field (field 2) may contain spaces and parentheses, so the line
     is cut after its last ``)`` before splitting. Returns None where /proc is
-    absent (not Linux) or the process is gone; a None start time makes the
-    probe fall back to pid existence alone.
+    absent (not Linux) or the process is gone.
     """
     try:
         with open(f"/proc/{pid}/stat") as fh:
@@ -62,6 +66,40 @@ def _proc_start_ticks(pid: int) -> int | None:
         return int(fields[19])
     except (IndexError, ValueError):
         return None
+
+
+def _ps_start_time(pid: int) -> str | None:
+    """``ps -o lstart=`` for ``pid`` — the macOS/BSD fallback where /proc is
+    absent. An opaque, second-precision string; equality-comparable across
+    two calls for the same still-live process, and distinct across a pid
+    reuse in the overwhelming majority of cases (same-second reuse is the
+    residual risk this module already lives with on Linux too, given clock
+    ticks are themselves not infinitely fine-grained). Returns None where
+    ``ps`` is unavailable or the pid is gone.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    return text or None
+
+
+def _process_start(pid: int) -> int | str | None:
+    """Process start time for ``pid``, honest ``None`` where it cannot be
+    determined at all. Callers only ever compare this for equality.
+    """
+    ticks = _proc_start_ticks(pid)
+    if ticks is not None:
+        return ticks
+    return _ps_start_time(pid)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -93,7 +131,7 @@ def write_owner(
     record = {
         "host": host or socket.gethostname(),
         "pid": pid,
-        "pid_start": _proc_start_ticks(pid),
+        "pid_start": _process_start(pid),
         "executor": executor,
         "job_id": job_id,
         "updated_at": utcnow_iso(),
@@ -176,7 +214,7 @@ def probe_owner(
     elif not _pid_exists(pid):
         driver, detail = "dead", f"pid {pid} is gone on {host}"
     else:
-        live_start = _proc_start_ticks(pid)
+        live_start = _process_start(pid)
         if recorded_start is not None and live_start is not None and live_start != recorded_start:
             driver = "dead"
             detail = f"pid {pid} was recycled (start time {live_start} != {recorded_start})"

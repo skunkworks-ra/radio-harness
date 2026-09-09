@@ -10,9 +10,9 @@ import os
 import socket
 import subprocess
 
-import pytest
-
 from analyst_driver.owner import (
+    _process_start,
+    _ps_start_time,
     clear_owner,
     owner_path,
     probe_owner,
@@ -33,11 +33,34 @@ def test_write_then_read_round_trip(tmp_path):
     assert back["job_id"] is None
 
 
-def test_write_records_pid_start_on_linux(tmp_path):
+def test_write_records_pid_start(tmp_path):
     rec = write_owner(tmp_path, executor="local")
-    # /proc exists on the supported platform; elsewhere None is the honest answer.
-    if os.path.exists(f"/proc/{os.getpid()}/stat"):
-        assert isinstance(rec["pid_start"], int)
+    # /proc on Linux, `ps -o lstart=` fallback elsewhere (e.g. macOS) --
+    # either way this process's own start time must be resolvable.
+    assert isinstance(rec["pid_start"], (int, str))
+
+
+def test_ps_start_time_is_stable_for_a_live_process():
+    """The macOS/BSD fallback, exercised directly regardless of host --
+    same pid, two calls, same answer."""
+    first = _ps_start_time(os.getpid())
+    second = _ps_start_time(os.getpid())
+    assert first is not None
+    assert first == second
+
+
+def test_ps_start_time_is_none_for_a_dead_pid():
+    proc = subprocess.Popen(["true"])
+    proc.wait()
+    assert _ps_start_time(proc.pid) is None
+
+
+def test_process_start_prefers_proc_when_available():
+    """On Linux this must be the /proc int, not the ps string -- confirms
+    the fallback in _process_start doesn't shadow the primary path."""
+    if not os.path.exists(f"/proc/{os.getpid()}/stat"):
+        return
+    assert isinstance(_process_start(os.getpid()), int)
 
 
 def test_read_absent_is_none(tmp_path):
@@ -110,11 +133,6 @@ def test_probe_dead_pid_is_dead(tmp_path):
     assert probe_owner(rec)["driver"] == "dead"
 
 
-@pytest.mark.skipif(
-    not os.path.exists(f"/proc/{os.getpid()}/stat"),
-    reason="recycled-pid detection needs /proc; honest None elsewhere (see "
-    "test_write_records_pid_start_on_linux)",
-)
 def test_probe_recycled_pid_is_dead_not_alive():
     """A recycled pid must not resurrect a crashed driver.
 
