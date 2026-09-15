@@ -28,7 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # skill (2026-09-15) — the driver-only fork of radio-analyst's execution
 # skill. wildcat/ was never ported (it's an unrelated concern, not part of
 # the interactive-vs-driver split), so the wildcat-specific cases below were
-# dropped along with it, not just re-pathed.
+# dropped along with it, not just re-pathed. Re-apply this fix if this file
+# is ever re-synced wholesale from radio-analyst again — it will revert.
 SKILLS_DIR = REPO_ROOT / ".claude" / "skills" / "radio-interferometry-driver"
 TELESCOPE_DATA_DIR = REPO_ROOT / "src" / "ms_inspect" / "data" / "telescopes"
 

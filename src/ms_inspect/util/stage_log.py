@@ -2,19 +2,12 @@
 stage_log.py — the workdir stage log, written by generated scripts and read by
 ms_workflow_status.
 
-A reduction's state used to be inferred from the filesystem: ms_workflow_status
-held a hardcoded list of caltable names and reported whichever ones it found.
-That could not work, because every writing tool takes its caltable path as an
-argument with no default, so the names are the caller's to choose. On the
-2026-08-31 G55 run the tool looked for 'bandpass.B', 'gain.G' and
-'gain.fluxscaled' while the run had written 'bandpass.b', 'gain.g' and
-'flux.fluxscale', reported one caltable out of four, and froze its
-recommendation for ten turns.
-
-The log replaces inference with a record. Each generated script appends one
-line per product it writes, AFTER CASA returns, so a line exists only if that
-step actually completed. It is append-only: a retry adds a line rather than
-destroying the previous one.
+A reduction's state cannot be inferred from the filesystem: every writing tool
+takes its caltable path as a caller-chosen argument, so no fixed set of names
+can be searched for. The log replaces inference with a record: each generated
+script appends one line per product it writes, after CASA returns, so a line
+exists only if that step actually completed. It is append-only — a retry adds
+a line rather than destroying the previous one.
 
 Placed in ms_inspect because it is the package ms_modify and ms_create both
 already import from; ms_inspect never imports either of them. The snippet is
@@ -23,13 +16,10 @@ self-contained — same contract as pathguard.SAFE_RM_TABLE_SNIPPET.
 
 Two limits, both deliberate:
 
-- The check is existence only. A caltable directory appears the moment CASA
-  starts writing it, so this does not prove the solve produced solutions. Row
-  counts were considered and deferred until an empty-caltable failure is
-  actually observed.
-- A script killed outright (SIGKILL, an OOM, the -6 abort seen when the disk
-  filled) writes no line at all. The log explains a failure; it does not detect
-  every one. The driver's recorded exit code remains the outer truth.
+- The check is existence only, not proof the solve produced solutions.
+- A script killed outright (SIGKILL, OOM, disk full) writes no line at all.
+  The log explains a failure; it does not detect every one. The driver's
+  recorded exit code remains the outer truth.
 """
 
 from __future__ import annotations
@@ -39,6 +29,13 @@ from pathlib import Path
 
 #: Filename, relative to the workdir. Shared by the writer snippet and the reader.
 STAGE_LOG_NAME = "stage_log.jsonl"
+
+#: Shape of one log line's envelope (stage/product/at/exists/measurement are
+#: unversioned — this covers only additions like this one). A reader newer
+#: than the writer can still read every version below its own; a reader
+#: OLDER than the writer must not guess at fields it does not know about —
+#: see schema_version_of()'s docstring.
+SCHEMA_VERSION = 1
 
 #: Embedded verbatim in generated scripts. Call once after each product is
 #: written. Opens, appends one line and closes — never holds a handle, because
@@ -64,6 +61,8 @@ def _record_stage(workdir, stage, product, measurement=None):
 
     exists = os.path.exists(product)
     entry = {
+        "schema_version": 1,
+        "analyst_rev": os.environ.get("ANALYST_REV", "unknown"),
         "stage": stage,
         "product": product,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -158,6 +157,17 @@ def completed_stages(entries: list[dict]) -> set[str]:
         for e in entries
         if e.get("exists") is True and e.get("stage") is not None
     }
+
+
+def schema_version_of(entry: dict) -> int:
+    """The envelope version one log line was written with.
+
+    A line written before schema_version existed carries no such key at all —
+    that is read as version 0, not a parse failure, so a caller can refuse
+    cleanly on a version it does not recognise instead of guessing at fields
+    it was never taught about.
+    """
+    return int(entry.get("schema_version", 0))
 
 
 def products_for(entries: list[dict], stage: str) -> list[str]:
