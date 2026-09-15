@@ -1,9 +1,9 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "radio-analyst",
-  "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT",
+  "name": "radio-harness",
+  "description": "Orchestration driver for radio-analyst — stage sequencing, seam checks, and headless execution skills for analyst_driver's turns",
   "metadata": {
-    "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT"
+    "description": "Orchestration driver for radio-analyst — stage sequencing, seam checks, and headless execution skills for analyst_driver's turns"
   },
   "owner": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
@@ -11,8 +11,8 @@
   },
   "plugins": [
     {
-      "name": "radio-analyst",
-      "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
+      "name": "radio-harness",
+      "description": "Orchestration driver for radio-analyst — stage sequencing, seam checks, and headless execution skills for analyst_driver's turns",
       "version": "0.1.0",
       "author": {
         "name": "Srikrishna Sekhar and Preshanth Jagannathan",
@@ -20,10 +20,10 @@
       },
       "source": "./",
       "category": "development",
-      "homepage": "https://github.com/skunkworks-ra/radio-analyst",
-      "repository": "https://github.com/skunkworks-ra/radio-analyst",
+      "homepage": "https://github.com/skunkworks-ra/radio-harness",
+      "repository": "https://github.com/skunkworks-ra/radio-harness",
       "license": "GPL-3.0",
-      "keywords": ["radio-astronomy", "interferometry", "CASA", "VLA", "MeerKAT", "uGMRT"]
+      "keywords": ["radio-astronomy", "interferometry", "CASA", "orchestration", "analyst-driver"]
     }
   ]
 }

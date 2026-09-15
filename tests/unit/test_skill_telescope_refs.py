@@ -24,14 +24,18 @@ import pytest
 from ms_inspect.util.telescope import _SPECS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILLS_DIR = REPO_ROOT / ".claude" / "skills" / "radio-interferometry"
+# radio-interferometry-driver replaced the old vendored radio-interferometry
+# skill (2026-09-15) — the driver-only fork of radio-analyst's execution
+# skill. wildcat/ was never ported (it's an unrelated concern, not part of
+# the interactive-vs-driver split), so the wildcat-specific cases below were
+# dropped along with it, not just re-pathed.
+SKILLS_DIR = REPO_ROOT / ".claude" / "skills" / "radio-interferometry-driver"
 TELESCOPE_DATA_DIR = REPO_ROOT / "src" / "ms_inspect" / "data" / "telescopes"
 
 # Skill files carrying telescope-derived reference material: each must point the
 # reader at the profiles rather than answering from its own text.
 PROFILE_POINTER_FILES = [
     SKILLS_DIR / "02-orientation.md",
-    SKILLS_DIR / "wildcat" / "00-core.md",
     SKILLS_DIR / "08-pband-specifics.md",
 ]
 
@@ -41,12 +45,10 @@ PROFILE_POINTER_FILES = [
 # known-RFI subbands, which are not receiver edges and belong in the skill.
 NO_BAND_EDGE_FILES = [
     SKILLS_DIR / "02-orientation.md",
-    SKILLS_DIR / "wildcat" / "00-core.md",
 ]
 
 SEFD_TABLE_FILES = [
     SKILLS_DIR / "11-imaging.md",
-    SKILLS_DIR / "wildcat" / "11-imaging.md",
 ]
 
 GRIDDER_FILES = SEFD_TABLE_FILES

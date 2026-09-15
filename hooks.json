@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "if": "Skill(radio-harness:radio-interferometry-driver)",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/sense.sh"}]
+      },
+      {
+        "matcher": "Skill",
+        "if": "Skill(radio-harness:stage-orchestration)",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/sense.sh"}]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__ms-modify__.*|mcp__plugin_.*_ms-modify__.*",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh"}]
+      },
+      {
+        "matcher": "mcp__ms-create__.*|mcp__plugin_.*_ms-create__.*",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh"}]
+      }
+    ]
+  }
+}
