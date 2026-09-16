@@ -239,7 +239,7 @@ Declared scope for this run: {scope}
 Previous turn: {previous}
 
 Do this, in order:
-1. Consult the radio-interferometry skill for the stage the status names.
+1. Consult the stage-orchestration skill first for the stage the status names.
 2. Inspect with read-only ms_inspect tools as needed.
 3. Call exactly ONE writing tool with execute=False so it writes a script
    into the work directory. Do not execute anything yourself. The writing
