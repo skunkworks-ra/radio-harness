@@ -470,7 +470,9 @@ class Loop:
         brief = render_brief(
             run, status_payload, last, self.scope, digest=digest, belief_state=prior_belief
         )
-        result: BackendResult = self.backend.run(brief, run["workdir"])
+        result: BackendResult = self.backend.run(
+            brief, run["workdir"], ms_path=run["ms_path"] or None
+        )
         decision = parse_decision(result.text or "")
         ordinal = self.db.next_ordinal(run_key)
 

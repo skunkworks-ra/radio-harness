@@ -982,7 +982,7 @@ def test_turn_reports_the_backend_failure_reason(tmp_path):
     class BrokenBackend:
         kind = "claude"
 
-        def run(self, prompt, workdir):
+        def run(self, prompt, workdir, *, ms_path=None):
             return BackendResult(text="", error="Error: Input must be provided", exit_code=1)
 
     db = DriverDB(tmp_path / "runs")

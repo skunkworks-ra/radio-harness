@@ -21,6 +21,7 @@ Capability notes per backend:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,7 +74,9 @@ class BackendResult:
 class Backend(Protocol):
     kind: str
 
-    def run(self, prompt: str, workdir: str | Path) -> BackendResult: ...
+    def run(
+        self, prompt: str, workdir: str | Path, *, ms_path: str | None = None
+    ) -> BackendResult: ...
 
 
 def _with_failure(res: BackendResult, out: subprocess.CompletedProcess) -> BackendResult:
@@ -121,7 +124,7 @@ class StubBackend:
         self.tool_calls = list(tool_calls) if tool_calls is not None else None
         self.calls: list[str] = []
 
-    def run(self, prompt: str, workdir: str | Path) -> BackendResult:
+    def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
         self.calls.append(prompt)
         if not self.responses:
             raise RuntimeError("stub backend ran out of responses")
@@ -213,7 +216,14 @@ class ClaudeBackend:
             args += ["--disallowedTools", ",".join(self.disallowed_tools)]
         return args
 
-    def run(self, prompt: str, workdir: str | Path) -> BackendResult:
+    def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
+        # The sense hook (hooks/sense.py) reads this to know which MS a
+        # workdir-glob fallback can't reliably identify on its own — a run
+        # already knows its own ms_path, so pass it rather than let the hook
+        # guess. Unset (not "") when there is none yet, e.g. before import.
+        env = None
+        if ms_path:
+            env = {**os.environ, "ANALYST_MS_PATH": ms_path}
         out = subprocess.run(
             self._args(),
             input=prompt,
@@ -221,6 +231,7 @@ class ClaudeBackend:
             text=True,
             cwd=str(workdir),
             timeout=self.timeout,
+            env=env,
         )
         res = _with_failure(self.parse(out.stdout), out)
         leaked = self.banned_tools_offered(res.tool_names_offered)
@@ -313,7 +324,7 @@ class OpencodeBackend:
         args.append(prompt)
         return args
 
-    def run(self, prompt: str, workdir: str | Path) -> BackendResult:
+    def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
         out = subprocess.run(
             self._args(prompt),
             capture_output=True,
@@ -370,7 +381,7 @@ class CodexBackend:
         args.append(prompt)
         return args
 
-    def run(self, prompt: str, workdir: str | Path) -> BackendResult:
+    def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
         if self.skill_paths:
             preamble = "Read these skill files before deciding:\n" + "\n".join(
                 f"- {p}" for p in self.skill_paths
