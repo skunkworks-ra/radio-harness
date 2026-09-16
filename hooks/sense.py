@@ -28,9 +28,10 @@ from pathlib import Path
 def _discover_ms_path(workdir: str) -> str | None:
     """Env var if the driver set one; otherwise the one non-calibrators MS.
 
-    Best-effort only. `radio-harness` does not yet set `ANALYST_MS_PATH` —
-    this is here so the hook degrades gracefully rather than requiring that
-    change to land first.
+    `ClaudeBackend` sets `ANALYST_MS_PATH` once a run has an MS (backends.py).
+    The glob fallback remains for callers that don't set it (an older backend,
+    or before import, when there is no MS yet) and degrades to None rather
+    than guessing when a workdir holds more than one candidate.
     """
     env_path = os.environ.get("ANALYST_MS_PATH")
     if env_path:
