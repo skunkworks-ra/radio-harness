@@ -3,10 +3,10 @@ tools/workflow_status.py — ms_workflow_status
 
 Rolls up the state of an MS + workdir into a single next-step label.
 
-The stage state comes from workdir/stage_log.jsonl, which the generated
-scripts append to as they complete — not from a fixed list of caltable names,
-since the caltable path is an argument to every writing tool and belongs to
-the caller.
+The stage state comes from the stage_log table in workdir/analyst.db, which
+the generated scripts insert into as they complete — not from a fixed list of
+caltable names, since the caltable path is an argument to every writing tool
+and belongs to the caller.
 
 Two kinds of fact, kept apart on purpose:
 
@@ -27,7 +27,12 @@ from pathlib import Path
 
 from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field, response_envelope
-from ms_inspect.util.stage_log import STAGE_LOG_NAME, completed_stages, products_for, read_stage_log
+from ms_inspect.util.stage_log import (
+    ANALYST_DB_NAME,
+    completed_stages,
+    products_for,
+    read_stage_log,
+)
 
 TOOL_NAME = "ms_workflow_status"
 
@@ -84,7 +89,7 @@ def run(ms_path: str, workdir: str) -> dict:
     done = completed_stages(entries)
     if not entries:
         warnings.append(
-            f"No {STAGE_LOG_NAME} in {wd}. Every stage reads as not yet run."
+            f"No stage log in {wd / ANALYST_DB_NAME}. Every stage reads as not yet run."
             " A workdir written before the stage log existed cannot be resumed here."
         )
 

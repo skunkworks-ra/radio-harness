@@ -10,8 +10,8 @@ The old version of this docstring said the tests did not cover "whether the
 filesystem heuristics for priorcals, caltables and images match what the
 ms_modify tools really write". They did not match — the tool held a hardcoded
 list of caltable NAMES while those paths are arguments the caller chooses —
-and that was the defect. The heuristics are gone; state comes from
-stage_log.jsonl, which the tools write themselves.
+and that was the defect. The heuristics are gone; state comes from the
+stage_log table in analyst.db, which the tools write themselves.
 
 What these still do NOT cover: whether open_table raises on a real locked or
 corrupt CASA table. That needs a real MS.
@@ -123,25 +123,26 @@ def test_present_corrected_column_reads_true(fake_ms, monkeypatch):
     assert corrected["flag"] == "COMPLETE"
 
 
+def _insert(workdir, stage, product, exists, error=None):
+    """Write one stage_log row directly, as a generated script would."""
+    import sqlite3
+
+    from ms_inspect.util.stage_log import ANALYST_DB_NAME, STAGE_LOG_DDL
+
+    con = sqlite3.connect(workdir / ANALYST_DB_NAME)
+    con.execute(STAGE_LOG_DDL)
+    con.execute(
+        "INSERT INTO stage_log (stage, product, at, product_exists, error) VALUES (?, ?, ?, ?, ?)",
+        (stage, product, "2026-09-02T00:00:00Z", 1 if exists else 0, error),
+    )
+    con.commit()
+    con.close()
+
+
 def _log(workdir, *stages, product="/w/thing"):
-    """Append a completed line per stage, the way a generated script does."""
-    import json
-
-    from ms_inspect.util.stage_log import STAGE_LOG_NAME
-
-    with open(workdir / STAGE_LOG_NAME, "a") as fh:
-        for stage in stages:
-            fh.write(
-                json.dumps(
-                    {
-                        "stage": stage,
-                        "product": product,
-                        "at": "2026-09-02T00:00:00Z",
-                        "exists": True,
-                    }
-                )
-                + "\n"
-            )
+    """Record a completed row per stage, the way a generated script does."""
+    for stage in stages:
+        _insert(workdir, stage, product, True)
 
 
 # --- helpers -----------------------------------------------------------------
@@ -265,30 +266,16 @@ def test_no_stage_log_reads_as_nothing_done_and_says_so(fake_ms, monkeypatch):
     result = _run(ms, workdir)
     assert result["data"]["stage_log_present"]["value"] is False
     assert result["data"]["stages_completed"] == []
-    assert any("stage_log.jsonl" in w for w in result["warnings"])
+    assert any("analyst.db" in w for w in result["warnings"])
 
 
 def test_a_stage_recorded_only_as_failed_does_not_count(fake_ms, monkeypatch):
-    """The failure line is the record OF the failure, not of the stage."""
-    import json
-
-    from ms_inspect.util.stage_log import STAGE_LOG_NAME
-
+    """The failure row is the record OF the failure, not of the stage."""
     ms, workdir = fake_ms
     (ms / "STATE").mkdir()
     monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
     _log(workdir, "set_intents")
-    (workdir / STAGE_LOG_NAME).open("a").write(
-        json.dumps(
-            {
-                "stage": "preflag",
-                "product": "/w/calibrators.ms",
-                "exists": False,
-                "error": "product not found",
-            }
-        )
-        + "\n"
-    )
+    _insert(workdir, "preflag", "/w/calibrators.ms", False, error="product not found")
 
     result = _run(ms, workdir)
     assert "preflag" not in result["data"]["stages_completed"]

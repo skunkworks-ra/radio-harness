@@ -54,9 +54,9 @@ class TestRecordAndCheck:
 
 class TestConcurrentDatabaseFile:
     def test_coexists_with_other_tables_in_the_same_db(self, tmp_path):
-        # sense_log shares analyst.db with stage_log/reduction_log once that
-        # migration lands — CREATE TABLE IF NOT EXISTS must not disturb an
-        # existing, unrelated table in the same file.
+        # sense_log shares analyst.db with stage_log/reduction_log —
+        # CREATE TABLE IF NOT EXISTS must not disturb an existing, unrelated
+        # table in the same file.
         con = sqlite3.connect(tmp_path / ANALYST_DB_NAME)
         con.execute("CREATE TABLE stage_log (id INTEGER PRIMARY KEY, stage TEXT)")
         con.execute("INSERT INTO stage_log (stage) VALUES ('gaincal')")

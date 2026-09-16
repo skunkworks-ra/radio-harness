@@ -3,13 +3,14 @@ Unit tests for util/stage_log.py.
 
 The snippet is tested by EXECUTING it, not by inspecting its text: it is
 embedded verbatim into generated scripts, so what matters is that the emitted
-source runs, appends the line, and raises when the product is absent. A test
+source runs, inserts the row, and raises when the product is absent. A test
 that only asserted on the string would pass while the emitted code was broken.
 """
 
 from __future__ import annotations
 
-import json
+import sqlite3
+import threading
 
 import pytest
 
@@ -70,10 +71,16 @@ def test_schema_version_of_a_current_line_is_one(tmp_path):
     assert stage_log.schema_version_of(entries[0]) == 1
 
 
-def test_schema_version_of_an_old_shape_line_is_zero_not_a_parse_failure(tmp_path):
-    """A line written before schema_version existed has no such key at all."""
-    old_line = {"stage": "gaincal", "product": str(tmp_path / "gain.g"), "exists": True}
-    (tmp_path / stage_log.STAGE_LOG_NAME).write_text(json.dumps(old_line) + "\n")
+def test_schema_version_of_a_row_with_no_schema_version_is_zero_not_a_parse_failure(tmp_path):
+    """A row written before schema_version existed has NULL there, not 1."""
+    con = sqlite3.connect(tmp_path / stage_log.ANALYST_DB_NAME)
+    con.execute(stage_log.STAGE_LOG_DDL)
+    con.execute(
+        "INSERT INTO stage_log (stage, product, at, product_exists) VALUES (?, ?, ?, ?)",
+        ("gaincal", str(tmp_path / "gain.g"), "2026-09-02T00:00:00Z", 1),
+    )
+    con.commit()
+    con.close()
 
     entries = stage_log.read_stage_log(tmp_path)
     assert stage_log.schema_version_of(entries[0]) == 0
@@ -123,23 +130,46 @@ def test_read_stage_log_absent_is_empty(tmp_path):
     assert stage_log.read_stage_log(tmp_path) == []
 
 
-def test_read_stage_log_skips_a_truncated_final_line(tmp_path):
-    """A job killed mid-write leaves a partial line; that is expected, not corrupt."""
-    path = tmp_path / stage_log.STAGE_LOG_NAME
-    path.write_text(
-        json.dumps({"stage": "priorcals", "product": "/w/opacities.opac", "exists": True})
-        + "\n"
-        + '{"stage": "gainca'
-    )
-    entries = stage_log.read_stage_log(tmp_path)
-    assert len(entries) == 1
-    assert entries[0]["stage"] == "priorcals"
+def test_read_stage_log_does_not_create_the_database(tmp_path):
+    stage_log.read_stage_log(tmp_path)
+    assert not (tmp_path / stage_log.ANALYST_DB_NAME).exists()
 
 
-def test_read_stage_log_skips_a_non_object_line(tmp_path):
-    path = tmp_path / stage_log.STAGE_LOG_NAME
-    path.write_text('["not", "an", "object"]\n' + json.dumps({"stage": "preflag", "exists": True}))
-    assert [e["stage"] for e in stage_log.read_stage_log(tmp_path)] == ["preflag"]
+def test_read_stage_log_without_the_table_is_empty(tmp_path):
+    """analyst.db may exist for the reduction log alone."""
+    con = sqlite3.connect(tmp_path / stage_log.ANALYST_DB_NAME)
+    con.execute("CREATE TABLE reduction_log (step INTEGER PRIMARY KEY)")
+    con.close()
+    assert stage_log.read_stage_log(tmp_path) == []
+
+
+def test_an_unreadable_database_raises_rather_than_reading_as_nothing_done(tmp_path):
+    """Empty would report every stage as not run: a silent failure."""
+    (tmp_path / stage_log.ANALYST_DB_NAME).write_bytes(b"not a database, " * 100)
+    with pytest.raises(sqlite3.DatabaseError):
+        stage_log.read_stage_log(tmp_path)
+
+
+def test_concurrent_writers_lose_no_rows(tmp_path):
+    record = _load_recorder()
+    product = tmp_path / "t.ms"
+    product.mkdir()
+    errors: list[BaseException] = []
+
+    def write(n):
+        try:
+            for i in range(20):
+                record(str(tmp_path), f"stage{n}", str(product), {"i": i})
+        except BaseException as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == []
+    assert len(stage_log.read_stage_log(tmp_path)) == 80
 
 
 # ---------------------------------------------------------------- derivations
@@ -268,3 +298,53 @@ def test_the_in_process_recorder_is_the_same_function_as_the_pasted_one(tmp_path
     theirs = stage_log.read_stage_log(other)[0]
     assert set(mine) == set(theirs)
     assert mine["measurement"] == theirs["measurement"]
+
+
+# ---------------------------------------------------------------- supersede
+
+
+def _two_stages(tmp_path):
+    record = _load_recorder()
+    for stage, name in (("initial_bandpass", "BP0.b"), ("applycal", "t.ms")):
+        (tmp_path / name).mkdir()
+        record(str(tmp_path), stage, str(tmp_path / name))
+
+
+def test_supersede_removes_the_stage_from_completed_but_keeps_the_rows(tmp_path):
+    _two_stages(tmp_path)
+    assert stage_log.supersede_stages(tmp_path, ["applycal"], "rerun of initial_bandpass") == 1
+
+    entries = stage_log.read_stage_log(tmp_path)
+    assert len(entries) == 2
+    assert stage_log.completed_stages(entries) == {"initial_bandpass"}
+    assert stage_log.products_for(entries, "applycal") == []
+    assert entries[1]["superseded_by"] == "rerun of initial_bandpass"
+    assert "superseded_by" not in entries[0]
+
+
+def test_a_new_row_after_supersede_counts_again(tmp_path):
+    _two_stages(tmp_path)
+    stage_log.supersede_stages(tmp_path, ["applycal"], "rerun")
+    _load_recorder()(str(tmp_path), "applycal", str(tmp_path / "t.ms"))
+    assert stage_log.completed_stages(stage_log.read_stage_log(tmp_path)) == {
+        "initial_bandpass",
+        "applycal",
+    }
+
+
+def test_supersede_does_not_rewrite_an_earlier_reason(tmp_path):
+    _two_stages(tmp_path)
+    stage_log.supersede_stages(tmp_path, ["applycal"], "first")
+    assert stage_log.supersede_stages(tmp_path, ["applycal"], "second") == 0
+    assert stage_log.read_stage_log(tmp_path)[1]["superseded_by"] == "first"
+
+
+def test_supersede_needs_a_reason(tmp_path):
+    _two_stages(tmp_path)
+    with pytest.raises(ValueError):
+        stage_log.supersede_stages(tmp_path, ["applycal"], "")
+
+
+def test_supersede_with_no_database_marks_nothing(tmp_path):
+    assert stage_log.supersede_stages(tmp_path, ["applycal"], "rerun") == 0
+    assert not (tmp_path / stage_log.ANALYST_DB_NAME).exists()

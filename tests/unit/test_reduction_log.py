@@ -1,5 +1,5 @@
 """
-Unit tests for ms_create/reduction_log.py — JSONL working-calls ledger.
+Unit tests for ms_create/reduction_log.py — the analyst.db working-calls ledger.
 
 No CASA required.
 """
@@ -7,6 +7,7 @@ No CASA required.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -51,15 +52,31 @@ class TestReductionLog:
         assert [s["tool"] for s in steps] == ["ms_gaincal", "ms_bandpass"]
         assert steps[0]["rationale"] == "initial phase"
 
-    def test_jsonl_on_disk(self, tmp_path):
+    def test_row_in_analyst_db(self, tmp_path):
         wd = str(tmp_path)
         run("append", wd, tool="ms_setjy", params={"standard": "Perley-Butler 2017"})
-        log = tmp_path / "reduction_log.jsonl"
-        assert log.exists()
-        rec = json.loads(log.read_text().splitlines()[0])
-        assert rec["tool"] == "ms_setjy"
-        assert rec["params"]["standard"] == "Perley-Butler 2017"
-        assert rec["step"] == 1
+        db = tmp_path / "analyst.db"
+        assert db.is_file()
+        con = sqlite3.connect(db)
+        step, tool, params = con.execute("SELECT step, tool, params FROM reduction_log").fetchone()
+        con.close()
+        assert tool == "ms_setjy"
+        assert json.loads(params)["standard"] == "Perley-Butler 2017"
+        assert step == 1
+
+    def test_shares_the_database_with_the_stage_log(self, tmp_path):
+        """One file per workdir: both tables live in analyst.db."""
+        from ms_inspect.util.stage_log import read_stage_log, record_stage
+
+        (tmp_path / "gain.g").mkdir()
+        record_stage(str(tmp_path), "gaincal", str(tmp_path / "gain.g"))
+        run("append", str(tmp_path), tool="ms_gaincal", params={})
+        assert [e["stage"] for e in read_stage_log(tmp_path)] == ["gaincal"]
+        assert run("list", str(tmp_path))["data"]["n_records"]["value"] == 1
+
+    def test_list_on_an_empty_workdir_creates_no_database(self, tmp_path):
+        assert run("list", str(tmp_path))["data"]["n_records"]["value"] == 0
+        assert not (tmp_path / "analyst.db").exists()
 
     def test_render_emits_replay(self, tmp_path):
         wd = str(tmp_path)

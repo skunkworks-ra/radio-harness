@@ -13,15 +13,10 @@ outdated understanding. A `PostToolUse` hook on skill-read calls
 tools calls `has_sensed` and denies the call if sensing never happened this
 session.
 
-Storage is its own `<workdir>/analyst.db` — independent of this repo's
-`stage_log.py`, which still uses `stage_log.jsonl`. `radio-analyst` has a
-separate, unlanded migration of `stage_log`/`reduction_log` onto a
-SQLite `analyst.db`; if this repo's vendored tool-layer copy is ever
-replaced by a pinned dependency on that work, sense_log's table can move into
-the same database and `ANALYST_DB_NAME` can be imported instead of
-duplicated. Until then, two storage files in one workdir is a real but minor
-inconsistency, not a functional problem — the two logs record unrelated
-facts and neither reads the other.
+Storage is `<workdir>/analyst.db` — the same database `stage_log.py` and
+`reduction_log.py` use, in its own `sense_log` table. The three logs record
+unrelated facts and none reads another; sharing the file is only about not
+scattering per-workdir state across several small databases.
 
 Keyed by the driver's own `session_id`, one fresh session per turn (each
 turn is a new `claude -p` process, never `--resume`/`--continue`), so no
@@ -35,8 +30,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-#: Duplicated from the pending stage_log.py SQLite migration — see docstring.
-ANALYST_DB_NAME = "analyst.db"
+from ms_inspect.util.stage_log import ANALYST_DB_NAME
 
 _DDL = (
     "CREATE TABLE IF NOT EXISTS sense_log ("

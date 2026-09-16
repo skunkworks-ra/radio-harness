@@ -10,8 +10,8 @@ artifact a cheaper model (or a future run) can replay step by step.
 Only validated calls should be shuttled in: failed attempts and dead ends stay
 out, so the ledger is the clean path, not the search for it.
 
-Storage is a JSON-lines file `reduction_log.jsonl` in the workdir — one record
-per line, append-only, trivially diffable and greppable.
+Storage is the `reduction_log` table in `<workdir>/analyst.db` (stdlib
+sqlite3), the same database as the stage log. Rows are only ever inserted.
 
 Actions:
   append  — record one working call (tool, params, outputs, rationale, rule)
@@ -21,35 +21,98 @@ Actions:
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.stage_log import ANALYST_DB_NAME
 
 TOOL_NAME = "ms_reduction_log"
 
-_LOG_NAME = "reduction_log.jsonl"
+_DDL = (
+    "CREATE TABLE IF NOT EXISTS reduction_log ("
+    "step INTEGER PRIMARY KEY, "
+    "ts TEXT NOT NULL, "
+    "tool TEXT NOT NULL, "
+    "params TEXT NOT NULL, "
+    "outputs TEXT NOT NULL, "
+    "rationale TEXT NOT NULL, "
+    "skill_rule TEXT NOT NULL, "
+    "status TEXT NOT NULL, "
+    "supersedes TEXT)"
+)
 
 
 def _log_path(workdir: str) -> Path:
-    return Path(workdir) / _LOG_NAME
+    return Path(workdir) / ANALYST_DB_NAME
 
 
 def _read_records(path: Path) -> list[dict]:
-    if not path.exists():
+    """Rows as dicts, in step order. ``supersedes`` only when set."""
+    if not path.is_file():
         return []
+    con = sqlite3.connect(path, timeout=30)
+    try:
+        if not con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='reduction_log'"
+        ).fetchone():
+            return []
+        rows = con.execute(
+            "SELECT step, ts, tool, params, outputs, rationale, skill_rule, status, supersedes"
+            " FROM reduction_log ORDER BY step"
+        ).fetchall()
+    finally:
+        con.close()
     records: list[dict] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    for step, ts, tool, params, outputs, rationale, skill_rule, status, supersedes in rows:
+        record = {
+            "step": step,
+            "ts": ts,
+            "tool": tool,
+            "params": json.loads(params),
+            "outputs": json.loads(outputs),
+            "rationale": rationale,
+            "skill_rule": skill_rule,
+            "status": status,
+        }
+        if supersedes is not None:
+            record["supersedes"] = supersedes
+        records.append(record)
     return records
+
+
+def _append_record(path: Path, record: dict) -> int:
+    """Insert one row; return its step number."""
+    con = sqlite3.connect(path, timeout=30, isolation_level=None)
+    try:
+        # Another writer may hold the lock while switching; the mode is persistent.
+        with contextlib.suppress(sqlite3.OperationalError):
+            con.execute("PRAGMA journal_mode=WAL")
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(_DDL)
+        cur = con.execute(
+            "INSERT INTO reduction_log"
+            " (ts, tool, params, outputs, rationale, skill_rule, status, supersedes)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record["ts"],
+                record["tool"],
+                json.dumps(record["params"], default=str),
+                json.dumps(record["outputs"], default=str),
+                record["rationale"],
+                record["skill_rule"],
+                record["status"],
+                record.get("supersedes"),
+            ),
+        )
+        con.execute("COMMIT")
+        return int(cur.lastrowid)
+    finally:
+        con.close()
 
 
 # Maps the recorded tool name to the package module whose run() implements it.
@@ -133,7 +196,7 @@ def run(
 
     Args:
         action:     'append', 'render', or 'list'.
-        workdir:    Directory holding (or to hold) reduction_log.jsonl.
+        workdir:    Directory holding (or to hold) analyst.db.
         tool:       (append) name of the tool/call that worked, e.g. 'ms_gaincal'.
         params:     (append) exact parameters that worked.
         outputs:    (append) salient outputs worth recording (paths, key numbers).
@@ -154,9 +217,7 @@ def run(
     path = _log_path(workdir)
 
     if action == "append":
-        records = _read_records(path)
         record = {
-            "step": len(records) + 1,
             "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tool": tool,
             "params": params or {},
@@ -165,16 +226,15 @@ def run(
             "skill_rule": skill_rule,
             "status": status,
         }
-        with path.open("a") as fh:
-            fh.write(json.dumps(record) + "\n")
+        step = _append_record(path, record)
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path=workdir,
             data={
                 "action": "append",
                 "log_path": fmt_field(str(path)),
-                "step_recorded": fmt_field(record["step"]),
-                "n_records": fmt_field(len(records) + 1),
+                "step_recorded": fmt_field(step),
+                "n_records": fmt_field(len(_read_records(path))),
             },
             casa_calls=[f"append → {path}"],
         )

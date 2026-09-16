@@ -74,7 +74,7 @@ class ReductionLogInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: str = Field(..., description="'append', 'render', or 'list'.")
-    workdir: str = Field(..., description="Directory holding reduction_log.jsonl.")
+    workdir: str = Field(..., description="Directory holding (or to hold) analyst.db.")
     tool: str = Field(default="", description="(append) tool/call name that worked.")
     params: dict | None = Field(default=None, description="(append) exact working parameters.")
     outputs: dict | None = Field(default=None, description="(append) salient outputs to record.")
@@ -132,7 +132,8 @@ async def ms_sdm_summary(params: SDMSummaryInput) -> str:
     name="ms_reduction_log",
     description=(
         "Working-calls ledger: shuttle KNOWN-GOOD calls into a per-reduction "
-        "JSONL recipe as you go. action='append' records one validated call "
+        "recipe (the reduction_log table in analyst.db) as you go. "
+        "action='append' records one validated call "
         "(tool, exact params, outputs, rationale, skill rule); 'render' emits the "
         "ordered recipe + a replay script; 'list' gives a compact step summary. "
         "Only shuttle calls that actually worked — failures stay out."
@@ -145,7 +146,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
 
     Args:
         params.action:     'append', 'render', or 'list'.
-        params.workdir:    Directory holding reduction_log.jsonl.
+        params.workdir:    Directory holding (or to hold) analyst.db.
         params.tool:       (append) tool/call name that worked.
         params.params:     (append) exact working parameters.
         params.outputs:    (append) salient outputs to record.

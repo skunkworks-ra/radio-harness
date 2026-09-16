@@ -47,6 +47,7 @@ from ms_inspect.tools import (
     shadowing,
     spectral,
     spw_amp_severity,
+    supersede_stage,
     verify_import,
     verify_model,
     workflow_status,
@@ -360,6 +361,19 @@ class WorkflowStatusInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to the MS.", min_length=1)
     workdir: str = Field(..., description="Workdir where caltables/images live.", min_length=1)
+
+
+class SupersedeStageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    workdir: str = Field(..., description="Workdir holding analyst.db.", min_length=1)
+    stages: list[str] = Field(
+        ..., description="Stage names to mark superseded, e.g. ['applycal'].", min_length=1
+    )
+    by: str = Field(
+        ...,
+        description="Non-empty reason, e.g. 'rerun of initial_bandpass'.",
+        min_length=1,
+    )
 
 
 class GaincalSnrPredictInput(BaseModel):
@@ -1631,9 +1645,10 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 @mcp.tool(
     name="ms_workflow_status",
     description=(
-        "State probe over MS + workdir. Stage completion comes from "
-        "workdir/stage_log.jsonl, which the generated scripts append to as they "
-        "finish; a workdir with no stage log reads as nothing done. Returns "
+        "State probe over MS + workdir. Stage completion comes from the "
+        "stage_log table in workdir/analyst.db, which the generated scripts "
+        "insert into as they finish; a workdir with no stage log reads as "
+        "nothing done. Returns "
         "ms_valid, stage_log_present, stages_completed, products_recorded, "
         "intents_populated, calibrators_ms_present, final_solves_completed, "
         "corrected_populated_target and corrected_populated_calibrators "
@@ -1651,6 +1666,28 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 async def ms_workflow_status(params: WorkflowStatusInput) -> str:
     """State probe over MS + workdir for pipeline resumption."""
     return await _run_tool(workflow_status.run, params.ms_path, params.workdir)
+
+
+@mcp.tool(
+    name="ms_supersede_stage",
+    description=(
+        "Mark every live stage_log row for the named stages as superseded, so "
+        "ms_workflow_status stops counting them as done and re-offers the first "
+        "stage that needs to run again. Rows are kept, not deleted — history of "
+        "what ran survives. Which stages are downstream of the one being redone "
+        "is the caller's judgment; this tool holds no stage order."
+    ),
+    annotations={
+        "title": "Supersede Stage",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_supersede_stage(params: SupersedeStageInput) -> str:
+    """Mark stage_log rows for the named stages as superseded."""
+    return await _run_tool(supersede_stage.run, params.workdir, params.stages, params.by)
 
 
 @mcp.tool(

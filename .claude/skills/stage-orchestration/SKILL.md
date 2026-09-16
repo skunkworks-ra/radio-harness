@@ -27,15 +27,15 @@ it by file name instead of restating it.
 **You never call a writing tool.** Your two allowed outcomes each turn are:
 (1) confirm the seam is healthy and dispatch to `radio-interferometry-driver`
 naming the stage, or (2) judge a stage needs a full redo and call
-`ms_supersede_stage` (see note below), then dispatch to the stage that
+`ms_supersede_stage(workdir, stages, by)`, then dispatch to the stage that
 produces its first missing input.
 
-> **`ms_supersede_stage` does not exist yet.** It wraps `supersede_stages()`
-> from `radio-analyst`'s `stage_log.py`, which is pending a separate SQLite
-> storage migration (`analyst.db`) not yet landed on this branch. Until it
-> lands, judgment (a) below can identify that a stage needs a redo and say so
-> in your turn notes, but cannot yet mark the log — the next turn will see
-> the same `next_recommended_step` until this tool exists.
+`ms_supersede_stage` marks stage_log rows superseded — it does not decide
+*which* stages that is. Pass the stage you are redoing plus every stage
+downstream of it that consumed its output; the tool itself holds no stage
+order, so a partial list leaves a downstream stage reading as done against
+an input that no longer counts. `by` is a short reason (e.g. "rerun of
+initial_bandpass") that lands in the log for later inspection.
 
 ## The two judgments, every turn
 

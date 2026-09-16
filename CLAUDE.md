@@ -278,12 +278,13 @@ Environment variable reference:
 | `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
 | `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
 
-### Pre-calibration inspection (7 tools)
+### Pre-calibration inspection (8 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
 | `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_supersede_stage` | `tools/supersede_stage.py` | Mark every live stage_log row for the named stages as superseded, so `ms_workflow_status` stops counting them as done. The only writing tool in this table — it mutates `analyst.db`, never the MS |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
@@ -319,7 +320,7 @@ It has its own FastMCP server entry point (`ms_create.server`, port 8002).
 |------|--------|-------------|
 | `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, config, band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation products, sources+intents, scan balance, max target elevation. Decide *what* a dataset is before importing it. |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
-| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe. `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script; `'list'` gives a compact step summary |
+| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction recipe (the `reduction_log` table in `analyst.db`). `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script; `'list'` gives a compact step summary |
 
 Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),
 `savecmds=True` (always write online flag file), `applyflags=False` (flagging
