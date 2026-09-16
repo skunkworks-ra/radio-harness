@@ -1,11 +1,11 @@
-"""Executor contract + local, slurm, htcondor adapters (PLAN.md steps 4 and 7).
+"""Executor contract + local, slurm, htcondor adapters.
 
 ``submit(script, job_dir) -> handle``, ``poll(handle) -> pending|running|done|
 failed``, ``exit_code(handle) -> int|None``. A handle is a plain dict the
 journal can store. Nothing here knows anything about CASA.
 
-The driver stays alive and waits for its jobs (user decision, 2026-08-31 —
-a dead driver is the exception, not the operating mode). The local executor
+The driver stays alive and waits for its jobs — a dead driver is the
+exception, not the operating mode. The local executor
 is therefore synchronous: ``submit`` runs the script to completion and the
 handle already carries the exit code. SLURM submits and is waited on by the
 loop polling ``sacct``; a driver restarted after a crash re-polls a recorded
@@ -159,7 +159,7 @@ class SlurmExecutor:
 
 
 class HTCondorExecutor:
-    """Placeholder — needs a real submit node to write and test (PLAN.md step 7)."""
+    """Placeholder — needs a real submit node to write and test."""
 
     kind = "htcondor"
 

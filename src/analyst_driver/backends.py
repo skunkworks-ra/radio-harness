@@ -1,4 +1,4 @@
-"""Backend contract + claude, opencode, codex adapters (PLAN.md step 6).
+"""Backend contract + claude, opencode, codex adapters.
 
 One contract: a command that takes a prompt non-interactively and returns
 text on stdout. Each adapter also does its best to extract the tool calls the
@@ -33,11 +33,8 @@ class BackendResult:
     text: str
     transcript: str | None = None  # raw event stream, journal-only
     model: str | None = None
-    #: Uncached input only. On a cached conversation this is the tail the cache
-    #: did not cover — 12 to 26 tokens a turn on the 2026-08-31 G55 run, against
-    #: 5.97M cache reads and 616k cache writes. It was the ONLY input field read
-    #: until 2026-09-02, so any cost figure taken from the driver database
-    #: undercounted input by 17,899x. Never use it alone; see total_tokens_in.
+    #: Uncached input only — the tail the prompt cache didn't cover. Never use
+    #: alone for a cost figure; see total_tokens_in.
     tokens_in: int | None = None
     tokens_cache_read: int | None = None
     tokens_cache_creation: int | None = None
@@ -176,13 +173,8 @@ class ClaudeBackend:
         Without it the driver cannot call a single ms_modify or ms_create tool,
         which is every tool it exists to call.
 
-        The two flags are NOT opposites, and conflating them is why the ban was
-        never enforced. ``--allowedTools`` PRE-APPROVES; it does not remove
-        anything. The 2026-08-31 G55 run made 101 Bash calls across 16 turns
-        with Bash absent from the allow list — only 36 were blocked, and those
-        by the working-directory rule, not by the tool list. Every transcript's
-        system/init event listed Bash, Write, Edit, Task and WebFetch. Removing
-        a tool takes ``--disallowedTools``.
+        The two flags are NOT opposites. ``--allowedTools`` PRE-APPROVES; it
+        does not remove anything. Removing a tool takes ``--disallowedTools``.
         """
         self.cmd = cmd
         self.mcp_config = mcp_config

@@ -220,8 +220,6 @@ def run(ms_path: str) -> dict:
         vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg, cal_entry)
 
         # --- Intents ---
-        # Also per field. The catalogue fallback used to require heuristic_mode,
-        # which meant a lone field missing its intents was never offered it.
         if intents:
             intent_field = field(sorted(intents), flag="COMPLETE")
         elif cal_entry:
@@ -436,14 +434,9 @@ def run(ms_path: str) -> dict:
 
     data = {
         "n_fields": n_fields,
-        # A measurement, not a verdict. This used to be a boolean
-        # `heuristic_intents`, set from the threshold below — but once role
-        # resolution became per field, that boolean no longer described any
-        # field's role, and it was wrong in both directions: true while a field
-        # with intents used them, false while a field without intents fell back
-        # to the catalogue. The per-field `field_role` flag is the answer; this
-        # is the coverage statistic, with its inputs, for the skill to threshold
-        # as it sees fit.
+        # A measurement, not a verdict: this is the coverage statistic, with
+        # its inputs, for the skill to threshold as it sees fit. The per-field
+        # `field_role` flag is the actual per-field answer.
         "n_fields_with_intents": n_with_intents,
         "intent_coverage_fraction": round(intent_fraction, 4),
         "fields": fields_out,

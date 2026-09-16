@@ -402,8 +402,8 @@ class TestFitPolTermsFromCatalogue:
 
         3C286 restricted to L-band (1-2 GHz) exposes only 3 pol nodes
         (1.02/1.47/1.87 GHz). The default deg 3/4 would need 4/5 nodes; rather
-        than raising (the AB1345 G55.7+3.4 trap), the fit must clamp each degree
-        to (n_nodes - 1) = 2 and warn.
+        than raising, the fit must clamp each degree to (n_nodes - 1) = 2 and
+        warn.
         """
         with caplog.at_level("WARNING"):
             polindex, polangle = fit_pol_terms_from_catalogue(

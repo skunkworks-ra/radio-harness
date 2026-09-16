@@ -12,10 +12,8 @@ rather than removed.
 
 Storage is the ``stage_log`` table in ``<workdir>/analyst.db`` (stdlib
 sqlite3, WAL). One insert is one transaction, so a job killed mid-write
-leaves either the whole row or none of it. Ported from radio-analyst's
-unlanded `origin/reconcile-before-split` (commit 8b51430); this repo's own
-``schema_version``/``analyst_rev`` columns (added independently, before this
-port) are folded into the same table rather than kept as a second file.
+leaves either the whole row or none of it. ``schema_version``/``analyst_rev``
+are folded into this same table rather than kept as a second file.
 
 Placed in ms_inspect because it is the package ms_modify and ms_create both
 already import from; ms_inspect never imports either of them. The snippet is

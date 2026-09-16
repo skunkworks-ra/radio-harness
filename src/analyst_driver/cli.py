@@ -1,9 +1,9 @@
-"""analyst-driver CLI (PLAN.md step 8): init, step, run, status, rebuild.
+"""analyst-driver CLI: init, step, run, status, rebuild.
 
 ``config.toml`` lives in the run root and is data, not code — operational
-settings only, never science. See PLAN.md "Files".
+settings only, never science.
 
-The verbs (user decision, 2026-08-31):
+The verbs:
 
 - ``init``  scaffolds ``config.toml`` and nothing else. It registers no run.
             Nothing else needs scaffolding: ``DriverDB.__init__`` creates the
@@ -81,11 +81,11 @@ kind = "claude"
 # itself would leave no job id, no exit code and no artifact checksum in the
 # journal — the run becomes unauditable, which is the point of the loop.
 #
-# allowed_tools PRE-APPROVES. It does not remove anything: the 2026-08-31 G55
-# run made 101 Bash calls across 16 turns with Bash absent from this list.
-# disallowed_tools is what actually removes a tool, and ClaudeBackend checks
-# the harness's own system/init event against it on every turn, because a flag
-# that is silently ignored looks exactly like a flag that works.
+# allowed_tools PRE-APPROVES. It does not remove anything, even for a tool
+# absent from the list. disallowed_tools is what actually removes a tool, and
+# ClaudeBackend checks the harness's own system/init event against it on
+# every turn, because a flag that is silently ignored looks exactly like a
+# flag that works.
 allowed_tools = [
   "mcp__ms-inspect",
   "mcp__ms-modify",
@@ -410,9 +410,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(args, {}, config_path)
 
     if not config_path.exists():
-        # A missing config used to fall through to code defaults in silence,
-        # so a mistyped --config ran a full reduction under settings nobody
-        # chose. It is now a stop.
+        # Silent fallback to code defaults would let a mistyped --config run
+        # a full reduction under settings nobody chose.
         print(
             f"no config at {config_path}. Run 'analyst-driver init' to write one.",
             file=sys.stderr,

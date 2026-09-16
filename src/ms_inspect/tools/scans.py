@@ -92,8 +92,8 @@ def run_scan_list(ms_path: str) -> dict:
 
             # Integration (dump) time for this scan — derived from the times
             # array itself. NOTE: msmd.exposuretime(scan=...) hard-segfaults
-            # CASA 6.7.x on some MSs (G55/AB1345), taking the whole process down
-            # (uncatchable), so we never call it. Median positive step is robust.
+            # CASA 6.7.x uncatchably on some MSs, so we never call it. Median
+            # positive step is robust.
             integration_s = float("nan")
             try:
                 if times is not None and times.size >= 2:

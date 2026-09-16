@@ -1,4 +1,4 @@
-"""Run index for the analyst driver (PLAN.md step 3).
+"""Run index for the analyst driver.
 
 The filesystem is the truth; this database is an index. Every row is
 reconstructable from the journal files under the run root:
@@ -95,12 +95,9 @@ CREATE TABLE IF NOT EXISTS turns (
     brief TEXT,
     decision TEXT,
     model TEXT,
-    -- Four separate counts, not one. They bill at different rates, so a single
-    -- "input tokens" number cannot support a cost figure. tokens_in used to
-    -- hold usage.input_tokens alone; on a cached conversation that is only the
-    -- uncached tail (12-26 tokens a turn on the G55 run) while the cache
-    -- counts carry everything real, so any cost taken from it undercounted
-    -- input by 17,899x.
+    -- Four separate counts, not one: they bill at different rates, so a
+    -- single "input tokens" number cannot support a cost figure. tokens_in
+    -- alone is just the uncached tail on a cached conversation.
     tokens_in INTEGER,              -- uncached input
     tokens_cache_read INTEGER,      -- read from the prompt cache
     tokens_cache_creation INTEGER,  -- written to the prompt cache

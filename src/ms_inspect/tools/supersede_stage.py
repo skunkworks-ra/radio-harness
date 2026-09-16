@@ -5,10 +5,9 @@ Marks every live stage_log row for the named stages as superseded, so
 ms_workflow_status stops counting them as done and next_recommended_step
 re-offers the first stage that needs to run again.
 
-Ported from radio-analyst's unlanded `origin/reconcile-before-split`
-(commit 8b51430); the underlying supersede_stages() primitive lives in
-ms_inspect.util.stage_log, alongside the log it mutates. This tool is a thin
-validating wrapper — the row-marking logic and its tests live there.
+The underlying supersede_stages() primitive lives in ms_inspect.util.stage_log,
+alongside the log it mutates. This tool is a thin validating wrapper — the
+row-marking logic and its tests live there.
 
 Which stages are downstream of the one being redone is the caller's
 judgment (the stage-orchestration skill), not this tool's — it holds no

@@ -275,9 +275,9 @@ def run_correlator_config(ms_path: str) -> dict:
         casa_calls.append("msmd.fieldnames(), msmd.scannumbers(), msmd.nspw()")
 
         # Try to get dump time from first scan.
-        # NOTE: msmd.exposuretime(scan=...) hard-segfaults CASA 6.7.x on some
-        # MSs (G55/AB1345), taking the whole process down (uncatchable), so we
-        # derive the dump time from the times array instead.
+        # NOTE: msmd.exposuretime(scan=...) hard-segfaults CASA 6.7.x
+        # uncatchably on some MSs, so we derive the dump time from the times
+        # array instead.
         try:
             scan_nums = sorted(msmd.scannumbers())
             times = np.unique(np.asarray(msmd.timesforscans([scan_nums[0]]), dtype=float))

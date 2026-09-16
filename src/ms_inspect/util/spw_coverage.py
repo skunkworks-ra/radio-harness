@@ -8,10 +8,10 @@ applied solution flags the uncovered SpWs — and the failure typically surfaces
 several stages later (e.g. as fluxscale "Cannot find solutions for transfer
 field(s)") rather than at solve time.
 
-The pathological case (observed on AB1345 / G55.7+3.4): a single source recorded
-under two field IDs with *disjoint* SpWs — 3C286 as field 0 (SpWs 0,1) and field
-1 (SpWs 2-9) — where the target lives only in 2-9. Solving the bandpass on field
-0 silently flagged everything downstream.
+The pathological case: a single physical source recorded under two field IDs
+with *disjoint* SpW coverage, where the target's SpWs live only in the field
+not chosen for the solve. Solving on the wrong field silently flags everything
+downstream.
 
 This module surfaces the cal-field-vs-target SpW sets at solve time. The set math
 (`evaluate_coverage`) is pure and CASA-free; `check_spw_coverage` is the thin

@@ -19,24 +19,14 @@ summary counts that in-memory state.
 
 Also checks FLAG_CMD subtable for pre-existing online shadow flags.
 
-Why not `flagdata(mode='shadow')` on its own, which is what this tool used to
-call: verified 2026-07-31 against casatasks 6.7.5.18 and a real VLA MS (3C391,
-D-config), that call returns an **empty dict**. It computes but reports nothing,
-because with `action='calculate'` flagdata emits a report only when the run
-includes a summary agent. The old code read that empty dict as
-`shadow_flag_fraction = 0.0`, COMPLETE.
+Why not `flagdata(mode='shadow')` on its own: with `action='calculate'`,
+flagdata emits a report only when the run includes a summary agent — the
+shadow agent alone computes flags but returns an empty dict, which reads as
+`shadow_flag_fraction = 0.0`, COMPLETE, silently wrong. The three-agent form
+lets the trailing summary see the shadow agent's effect.
 
-The three-agent form was verified on the same MS and CASA version. Control:
-substituting `mode='manual' antenna='0'` for the shadow agent moves the delta
-by 13,339,392 of 216,417,024, so the trailing summary demonstrably sees what the
-middle agent did. With the shadow agent the delta is 0, which agrees with the
-geometry (minimum projected baseline 28.0 m against 25 m dishes) and with
-`action='apply'` on a scratch copy. Zero shadowing here is a real measurement,
-not a silence.
-
-`tolerance_m` is passed through but NOT verified: the delta stays 0 for
-tolerances from 0 to 1e6 m, under both calculate and apply, which we could not
-explain. Treat a non-default tolerance as unproven.
+`tolerance_m` is passed through but not verified against a known-shadowed MS.
+Treat a non-default tolerance as unproven.
 """
 
 from __future__ import annotations
@@ -56,13 +46,11 @@ def _summaries_by_name(result: object) -> dict[str, dict]:
     """
     Index the summary records of a flagdata(mode='list') return by their name.
 
-    The return shape is arity-dependent, which is why the CASA docs appear to
-    contradict themselves (settled 2026-07-31 against casatasks 6.7.5.18):
-    a single summary agent yields a flat record whose 'name' is the one given,
-    two or more yield {'report0': {...}, 'report1': {...}} with 'name' inside.
-    Both are handled; anything else raises rather than degrading, because a
-    `.get(key, {})` here is what made the previous per-SpW attempt fail
-    silently (fix-plan Excluded item B).
+    The return shape is arity-dependent: a single summary agent yields a flat
+    record whose 'name' is the one given; two or more yield
+    {'report0': {...}, 'report1': {...}} with 'name' inside. Both are
+    handled; anything else raises rather than degrading — a `.get(key, {})`
+    here would fail silently instead.
     """
     if not isinstance(result, dict) or not result:
         raise ValueError(f"flagdata(mode='list') returned no report ({result!r})")

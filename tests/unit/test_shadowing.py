@@ -6,9 +6,9 @@ arities, and _shadow_delta's before/after subtraction, including that a missing
 or malformed report raises instead of reading as zero shadowing.
 
 What they do NOT cover: the flagdata call itself, the FLAG_CMD read, or the
-assembled envelope. The record shapes below are not invented — they are what
-casatasks 6.7.5.18 returned against 3C391 D-config on 2026-07-31, where a
-single summary agent gives a flat record and two or more give reportN wrappers.
+assembled envelope. The record shapes below are not invented — they are real
+flagdata(mode='list') returns: a single summary agent gives a flat record,
+two or more give reportN wrappers.
 """
 
 from __future__ import annotations

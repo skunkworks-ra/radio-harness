@@ -1,12 +1,10 @@
 """
 Unit tests for analyst_driver/backends.py — the tool ban in particular.
 
-The fixture in tests/unit/fixtures/ is the REAL system/init event captured from
-turn 1 of the 2026-08-31 G55 run, not a hand-written one. That matters here more
-than usual: the run was configured with Bash absent from allowed_tools and made
-101 Bash calls anyway, and the reason is visible only in this event. A synthetic
-fixture would have been written to match what we believed, which is exactly how
-the ban came to be documented as working while it did not.
+The fixture in tests/unit/fixtures/ is a REAL captured system/init event, not
+a hand-written one. That matters here more than usual: a synthetic fixture
+would be written to match what we believed the harness does, which is exactly
+how a tool ban can end up documented as working while it silently is not.
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ from analyst_driver.backends import ClaudeBackend
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-#: The list the G55 run actually passed as --allowedTools.
+#: A realistic --allowedTools list, matching the captured fixture's turn.
 G55_ALLOWED = [
     "mcp__ms-inspect",
     "mcp__ms-modify",
@@ -166,12 +164,11 @@ def test_the_default_ban_catches_the_g55_leak(g55_init_event):
 
 # ---------------------------------------------------------------- token usage
 #
-# The fixture is the real result event from turn 2 of the G55 run. Its usage
-# block is why a hand-written one would not have caught this: input_tokens is
-# 26 while cache_read_input_tokens is 417,313. Across the run the driver
-# recorded 368 input tokens against 6,586,740 actually billed — 17,899x low.
-# Any cost figure taken from the database was wrong by four orders of
-# magnitude, and nothing about the number looked wrong.
+# The fixture is a real captured result event. Its usage block is why a
+# hand-written one would not have caught the bug this guards against:
+# input_tokens is small while cache_read_input_tokens carries almost
+# everything real, and a cost figure taken from input_tokens alone looks
+# perfectly plausible while being off by orders of magnitude.
 
 
 @pytest.fixture

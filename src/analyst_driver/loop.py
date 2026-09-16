@@ -1,8 +1,8 @@
-"""The turn (PLAN.md steps 4, 5): sense, decide, read the result, dispatch,
-record — plus the pure functions each stage uses.
+"""The turn: sense, decide, read the result, dispatch, record — plus the pure
+functions each stage uses.
 
-The driver stays alive and waits for its jobs (user decision, 2026-08-31).
-``Loop.step`` runs one whole turn for one run, including the wait; with
+The driver stays alive and waits for its jobs. ``Loop.step`` runs one whole
+turn for one run, including the wait; with
 ``block=False`` it advances a run only when its job has finished, so
 ``run --all`` can interleave several runs.
 
@@ -36,11 +36,8 @@ def parse_decision(text: str) -> dict | None:
     ``raw_decode`` reports where an object ends, the cursor jumps straight
     there — nothing inside that span is examined again, so a nested object
     (e.g. one of the "outputs" entries) is never treated as an independent
-    candidate. This is what a trailing markdown code fence used to defeat:
-    the fence broke an "object ends at the exact tail" check, and the old
-    fallback then picked the last nested brace it found instead of the
-    envelope containing it (G55 run, turn 7). A parse failure is a
-    retryable turn, not a run failure — the caller records it and the next
+    candidate, even behind a trailing markdown code fence. A parse failure is
+    a retryable turn, not a run failure — the caller records it and the next
     turn starts fresh.
     """
     decoder = json.JSONDecoder()
@@ -107,9 +104,9 @@ def harvest_metrics(payload: Any, prefix: str) -> list[dict]:
 def _unwrap_mcp_result(payload: Any) -> Any:
     """Undo the MCP bridge's own double-encoding, if present.
 
-    A real captured envelope (G55 run, turn 5) decodes once to
-    ``{"result": "<json string>"}`` — a dict with exactly one key whose value
-    is itself JSON text. That is the bridge's wrapper, not the tool's
+    A captured envelope can decode once to ``{"result": "<json string>"}`` —
+    a dict with exactly one key whose value is itself JSON text. That is the
+    bridge's wrapper, not the tool's
     payload, so a second decode is needed before ``harvest_metrics`` or
     ``_find_key`` ever sees a numeric leaf. Any other shape (a plain dict, a
     ``{"result": <non-string>}``) is returned unchanged — this unwraps one
@@ -276,10 +273,9 @@ def free_bytes(workdir: str | Path) -> int | None:
     """Free bytes on the filesystem holding workdir. None if it cannot be read.
 
     Reported as a measured number with no threshold and no refusal, consistent
-    with "the driver may report a number, it may never name a verdict". The
-    2026-08-31 G55 run halted when applycal_target aborted mid-write on a full
-    filesystem (exit -6, FiledesIO::write, 1.3 MB free against a 310 GB target
-    MS) and left a partial main table. Nothing in the brief had said so.
+    with "the driver may report a number, it may never name a verdict" — a
+    write that aborts mid-way on a full filesystem leaves a partial main table
+    with nothing in the brief having warned of it.
 
     Sizing the requirement per stage is the harder half and is not done here.
     """
@@ -527,12 +523,9 @@ class Loop:
             )
             # "stopped" is a neutral terminal state, not a verdict: the driver
             # cannot independently confirm a reduction actually succeeded, only
-            # that the model set done=true and the run is no longer active. The
-            # 2026-08-31 G55 run used done=true to signal a halt it could not
-            # recover from ("Halted, not complete" in its own notes) — the old
-            # "completed" status contradicted that note. Read decision.notes
-            # for what the model actually meant; the status field only says
-            # the run stopped.
+            # that the model set done=true and the run is no longer active.
+            # done=true can mean a halt the model could not recover from, not
+            # only genuine completion — read decision.notes for which one.
             self.db.set_run_status(run_key, "stopped")
             return {"action": "run_completed", "ordinal": ordinal}
 

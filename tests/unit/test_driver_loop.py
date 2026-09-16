@@ -103,11 +103,12 @@ def test_harvest_from_tool_calls_parses_text_blocks():
 
 
 def test_harvest_unwraps_the_real_mcp_double_encoding():
-    """A captured envelope (G55 run, turn 5, ms_corrected_stats).
+    """A captured envelope, not a hand-typed one.
 
     ``result`` decodes once to ``{"result": "<json string>"}`` — the MCP
-    bridge's own wrapper — not the tool's payload. Before the fix this
-    produced zero rows on every real run despite passing hand-typed tests.
+    bridge's own wrapper — not the tool's payload. A hand-typed fixture would
+    skip this double-encoding and pass while every real run harvested zero
+    rows.
     """
     call = json.loads((FIXTURES / "g55_turn5_mcp_tool_call.json").read_text())
     rows = harvest_from_tool_calls([call])
@@ -1007,10 +1008,10 @@ def test_turn_reports_the_backend_failure_reason(tmp_path):
 # Free space in the brief
 # ---------------------------------------------------------------------------
 #
-# The G55 run halted when applycal_target aborted mid-write on a full
-# filesystem and left a partial main table. Nothing in the brief had said the
-# disk was nearly full. This is reported as a measured number with no threshold
-# and no refusal — the driver may report a number, it may never name a verdict.
+# A write that aborts mid-way on a full filesystem leaves a partial main
+# table with nothing in the brief having warned of it. Free space is reported
+# as a measured number with no threshold and no refusal — the driver may
+# report a number, it may never name a verdict.
 
 
 def test_free_bytes_reports_a_real_number(tmp_path):
