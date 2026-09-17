@@ -8,8 +8,7 @@ P1–P12 this plan refers to. Do not relitigate §9 (decisions already made).
 
 ## 0. Ground truth
 
-- Repo: `/Users/ssekhar/src/skunkworks-ra/radio-harness`, branch
-  `native-harness`, cut from `main` at `e7a3aff`.
+- Repo: this repository (`radio-harness`), branch `native-harness`, cut from `main` at `e7a3aff`.
 - Env: `pixi run <cmd>` from the repo root. Baseline: `pixi run pytest
   tests/unit -q` → 1123 passed; `pixi run ruff check src tests` clean.
 - Python ≥3.12, `mcp` 1.26.0, `pydantic` 2.12, `httpx` 0.28 installed.
@@ -47,7 +46,7 @@ P1–P12 this plan refers to. Do not relitigate §9 (decisions already made).
 - Job logs live in `<run_root>/<run_key>/jobs/NNNN/job.log` (`db._run_dir`),
   **not** in the work directory. The brief passes these paths as `logs=`.
 - Anthropic facts used below come from the API docs current at 2026-09-16
-  (via the `claude-api` skill): default model `claude-opus-5`; thinking is on
+  (Anthropic API reference): default model `claude-opus-5`; thinking is on
   by default (omit the `thinking` param); no `temperature`; assistant prefill
   rejected; `strict: true` on a tool definition validates `input`;
   `cache_control: {"type": "ephemeral"}` (optional `"ttl": "1h"`); usage
@@ -190,7 +189,7 @@ separately.
 | tool results | one `{"role":"tool","tool_call_id":r.call_id,"content":r.text}` **per result**, in call order (this API has no `is_error`; prefix the text with `ERROR: ` when `is_error`) |
 | stop | `finish_reason`: `tool_calls`→`tool_use`, `stop`→`end_turn`, `length`→`max_tokens`, `content_filter`→`refusal`, else `other` |
 | usage | `usage.prompt_tokens`, `usage.prompt_tokens_details.cached_tokens` (may be absent → None), `completion_tokens`; `cache_write` always None |
-| params | `model`, `max_tokens` (config, default 16000), `temperature` (config, default 0.2 as in the arxiv-fetcher reference client) |
+| params | `model`, `max_tokens` (config, default 16000), `temperature` (config, default 0.2) |
 | `content is None` with `finish_reason=="length"` | `Reply.text=""`, `stop="max_tokens"` — reasoning models can spend the whole budget before emitting content |
 
 **`FakeProvider(replies: list[Reply])`** — pops one `Reply` per `complete`
@@ -209,13 +208,12 @@ api_key_env = "ANTHROPIC_API_KEY"
 # base_url = "https://ai.tejas.tacc.utexas.edu/v1"   # openai-compatible endpoints
 # cache_ttl = "5m"                                    # anthropic only: 5m | 1h
 # max_rounds = 30
-# strict_tools = true                                 # anthropic default true, openai default false
 # max_tokens = 16000
 # temperature = 0.2                                   # openai only
 ```
 
 `api_key_env` names the variable; the key is never in the file
-(arxiv-fetcher pattern). A missing variable is a `RuntimeError` at backend
+A missing variable is a `RuntimeError` at backend
 construction, not at the first turn.
 
 ### 3.5 Tests (`test_driver_providers.py`)
@@ -384,7 +382,7 @@ n_rejected, files_read, decision_source). Serialized as JSONL into
 class ApiBackend:
     kind = "api"
     def __init__(self, *, provider: str, model: str, api_key_env: str, base_url=None,
-                 cache_ttl="5m", max_rounds=30, strict_tools=None, max_tokens=16000,
+                 cache_ttl="5m", max_rounds=30, max_tokens=16000,
                  temperature=0.2, skill_root: Path, read_roots: list[Path]): ...
     def run(self, prompt, workdir, *, ms_path=None) -> BackendResult
 ```
@@ -440,7 +438,7 @@ it — add one `test_driver_loop.py` case using `ApiBackend` over
    count, decision fields, wall time, `tokens_in`/`tokens_cache_read`.
    `tokens_cache_read` must be non-zero on rounds ≥2 of every turn.
 4. Repeat with `provider="openai"`, `base_url` = TACC, one model from the
-   arxiv-fetcher pool (`Qwen3-235B-A22B-Instruct-2507` first — largest
+   TACC pool (`Qwen3-235B-A22B-Instruct-2507` first — largest
    context, instruct-tuned). Record: rounds/turn, rejections, whether the
    decision came from the tool or text.
 5. Write both tables into `docs/native_harness_first_run.md`. If step 3
@@ -482,6 +480,11 @@ deleted tests; report the count.
 - `parse_decision` stays as fallback.
 - Skills move to `skills/` at the repo root; content untouched.
 - Anthropic model default `claude-opus-5`; thinking left at model default.
+- `strict` is set only on `submit_decision`. Anthropic strict mode rejects
+  `minLength`/`minimum`, which the FastMCP schemas carry, so the CASA tools
+  are never strict on any provider (stage 1 finding).
+- The OpenAI adapter sends `max_tokens`, not `max_completion_tokens`:
+  llama.cpp and older vLLM accept only the former (stage 1 finding).
 - No streaming, no compaction, no fallbacks, no token budget in v1.
 - OpenAI surface is Chat Completions only (not the Responses API).
 
@@ -491,5 +494,5 @@ deleted tests; report the count.
   turns depends on typical CASA job wall time on the target machine.
 - Whether `ms-modify` descriptions (~10k tokens) should be shortened for
   small-context models. Only if a real run on TACC/local shows pressure.
-- Whether `strict_tools` can be on for TACC's server (vLLM accepts
-  `strict` on recent versions; unverified).
+- Whether TACC's server honours `strict` on `submit_decision` (vLLM accepts
+  it on recent versions; unverified).
