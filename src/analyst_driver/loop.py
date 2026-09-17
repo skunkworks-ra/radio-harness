@@ -243,29 +243,29 @@ Do this, in order:
    tools are the ms_modify server AND the ms_create server — at the
    import_asdm stage the tool you need is ms_import_asdm, from ms_create,
    and it takes the raw input path above, not an MS.
-4. End your reply with one JSON object, nothing after it:
-   {{"script": "<path to the generated script>",
-     "tool": "<the tool you called>",
-     "stage": "<the stage this advances>",
-     "cited": [{{"name": "...", "value": ..., "source": "<file you read it from>"}}],
-     "outputs": [{{"path": "<product the script will write>", "kind": "caltable|image|plot|ms"}}],
-     "notes": "<one sentence>"}}
-   Only "script" is required. At the import stage name the MS the script will
-   write as an output with kind "ms": that is how the loop learns where the
-   MS is, and the run cannot continue without it.
+4. Finish by calling submit_decision, once, with:
+     script: <path to the generated script>
+     tool: <the tool you called>
+     stage: <the stage this advances>
+     cited: [{{"name": ..., "value": ..., "source": "<tool call you read it from>"}}]
+     outputs: [{{"path": "<product the script will write>", "kind": "caltable|image|plot|ms"}}]
+     notes: <one sentence>
+   A turn that advances a stage must name "script". At the import stage name
+   the MS the script will write as an output with kind "ms": that is how the
+   loop learns where the MS is, and the run cannot continue without it.
 5. If the reduction has reached the declared scope above, or is otherwise
-   finished with no stage remaining, reply instead with
-   {{"done": true, "notes": "<why it is finished>"}} and name no script.
+   finished with no stage remaining, call submit_decision with done=true and
+   notes explaining why, and name no script.
    Only you can say this: ms_workflow_status reports "selfcal_or_done" and
    cannot tell the two apart. The declared scope is a stated goal, not a
    rule the loop checks — weigh it against what the data actually needs.
 {belief_state_instruction}"""
 
 _BELIEF_STATE_INSTRUCTION = """\
-6. Add a "belief_state" field to the JSON object: your working hypothesis for
-   this run, rewritten in full against what "Measured so far" now shows — not
-   appended to the carried-forward version. See the belief-state skill for
-   what belongs in it and what does not.
+6. Include belief_state in the submit_decision call: your working hypothesis
+   for this run, rewritten in full against what "Measured so far" now shows —
+   not appended to the carried-forward version. See the belief-state skill
+   for what belongs in it and what does not.
 """
 
 

@@ -28,7 +28,7 @@ from analyst_driver.tools import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
-SKILL_ROOT = REPO / "skills" if (REPO / "skills").is_dir() else REPO / ".claude" / "skills"
+SKILL_ROOT = REPO / "skills"
 
 SCRIPT_TOOLS = {
     "ms_set_intents",

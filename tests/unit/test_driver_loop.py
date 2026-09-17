@@ -732,7 +732,7 @@ def test_run_all_stops_once_the_run_completes(tmp_path):
 def test_brief_tells_the_model_how_to_declare_completion(tmp_path):
     run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
     brief = render_brief(run, {"data": {"next_recommended_step": "selfcal_or_done"}}, None)
-    assert '"done": true' in brief
+    assert "submit_decision with done=true" in brief
     assert "selfcal_or_done" in brief
 
 

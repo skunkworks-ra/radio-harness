@@ -140,6 +140,10 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
     backend_kind = backend_cfg.pop("kind")
     if backend_kind == "stub":
         backend = StubBackend(backend_cfg.get("responses") or [])
+    elif backend_kind == "api":
+        # Job logs live under the run root, outside the work directory; the
+        # model reads them with read_file, so the run root is a read root.
+        backend = make_backend(backend_kind, read_roots=[db.run_root], **backend_cfg)
     else:
         backend = make_backend(backend_kind, **backend_cfg)
 

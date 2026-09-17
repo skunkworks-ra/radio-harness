@@ -129,6 +129,89 @@ class StubBackend:
         return BackendResult(text=self.responses.pop(0), model="stub", tool_calls=calls)
 
 
+class ApiBackend:
+    """The harness's own inner loop over a model provider's HTTP API.
+
+    Builds the tool registry (the three FastMCP servers in-process plus
+    ``read_file`` and ``submit_decision``) and the system prompt once, then
+    runs one ``Agent`` turn per ``run`` call and maps it to ``BackendResult``.
+    """
+
+    kind = "api"
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        model: str,
+        api_key_env: str,
+        base_url: str | None = None,
+        cache_ttl: str = "5m",
+        max_rounds: int | None = None,
+        max_tokens: int = 16000,
+        temperature: float = 0.2,
+        skill_root: str | Path | None = None,
+        read_roots: list[str | Path] | None = None,
+        _provider: Any = None,
+        _registry: Any = None,
+    ):
+        from analyst_driver.agent import DEFAULT_MAX_ROUNDS, Agent
+        from analyst_driver.providers import make_provider
+        from analyst_driver.skills import default_skill_root, system_prompt
+        from analyst_driver.tools import ToolRegistry
+
+        self.provider_kind = provider
+        self.model = model
+        root = Path(skill_root) if skill_root else default_skill_root()
+        self.skill_root = root
+        self.read_roots = [Path(p) for p in (read_roots or [])]
+        if _provider is None:
+            kwargs: dict[str, Any] = dict(
+                model=model, api_key_env=api_key_env, base_url=base_url, max_tokens=max_tokens
+            )
+            if provider == "anthropic":
+                kwargs["cache_ttl"] = cache_ttl
+            else:
+                kwargs["temperature"] = temperature
+            _provider = make_provider(provider, **kwargs)
+        self.provider = _provider
+        self.registry = _registry or ToolRegistry.default(
+            skill_root=root, read_roots=self.read_roots
+        )
+        self.agent = Agent(
+            self.provider,
+            self.registry,
+            system_prompt(root),
+            max_rounds=max_rounds or DEFAULT_MAX_ROUNDS,
+        )
+
+    def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
+        from analyst_driver.agent import sum_usage, transcript_jsonl
+
+        turn, error = self.agent.run_turn(prompt, Path(workdir))
+        texts = [r["text"] for r in turn.transcript if r.get("type") == "assistant" and r["text"]]
+        text = texts[-1] if texts else ""
+        if turn.decision is not None and turn.decision_source == "tool":
+            # The loop reads the decision with parse_decision, which takes the
+            # last top-level JSON object in the text.
+            text = (text + "\n" if text else "") + json.dumps(turn.decision, sort_keys=True)
+        usage = sum_usage(turn)
+        return BackendResult(
+            text=text,
+            transcript=transcript_jsonl(turn),
+            model=self.model
+            if self.provider is None
+            else getattr(self.provider, "model", self.model),
+            tokens_in=usage.input_tokens,
+            tokens_cache_read=usage.cache_read,
+            tokens_cache_creation=usage.cache_write,
+            tokens_out=usage.output_tokens,
+            tool_calls=list(turn.tool_calls),
+            error=error,
+            exit_code=None,
+        )
+
+
 #: Removed from every claude turn unless a caller explicitly overrides it.
 #: This is a CODE default, not a config default, on purpose: a config written
 #: before the ban existed has no disallowed_tools key, and taking the ban from
@@ -405,6 +488,8 @@ class CodexBackend:
 
 
 def make_backend(kind: str, **kwargs: Any) -> Backend:
+    if kind == "api":
+        return ApiBackend(**kwargs)
     if kind == "claude":
         return ClaudeBackend(**kwargs)
     if kind == "opencode":

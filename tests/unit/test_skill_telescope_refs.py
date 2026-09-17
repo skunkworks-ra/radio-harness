@@ -30,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # the interactive-vs-driver split), so the wildcat-specific cases below were
 # dropped along with it, not just re-pathed. Re-apply this fix if this file
 # is ever re-synced wholesale from radio-analyst again — it will revert.
-SKILLS_DIR = REPO_ROOT / ".claude" / "skills" / "radio-interferometry-driver"
+SKILLS_DIR = REPO_ROOT / "skills" / "radio-interferometry-driver"
 TELESCOPE_DATA_DIR = REPO_ROOT / "src" / "ms_inspect" / "data" / "telescopes"
 
 # Skill files carrying telescope-derived reference material: each must point the
