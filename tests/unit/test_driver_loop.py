@@ -1004,6 +1004,61 @@ def test_turn_reports_the_backend_failure_reason(tmp_path):
     db.close()
 
 
+def test_step_marks_a_backend_error_turn_failure_distinctly(tmp_path):
+    """turn_failed carries backend_error so run_all knows not to hot-loop it."""
+
+    class BrokenBackend:
+        kind = "claude"
+
+        def run(self, prompt, workdir, *, ms_path=None):
+            return BackendResult(text="", error="boom", exit_code=1)
+
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", ms_path=str(tmp_path / "a.ms"), workdir=str(tmp_path), executor="local")
+    loop = Loop(db, BrokenBackend(), LocalExecutor(), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "import_asdm"}}
+
+    result = loop.step("k1")
+    assert result["action"] == "turn_failed"
+    assert result["backend_error"] is True
+    db.close()
+
+
+def test_run_all_backs_off_a_repeated_backend_error_instead_of_hot_looping(tmp_path, monkeypatch):
+    """A permanent backend failure (e.g. context-window overflow) must not be
+    retried with zero delay through every remaining turn — it will never
+    succeed on retry, so run_all must sleep between attempts like it does for
+    a job that is still "waiting", instead of hot-looping through max_turns."""
+    import analyst_driver.loop as loop_mod
+
+    class AlwaysBrokenBackend:
+        kind = "api"
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, prompt, workdir, *, ms_path=None):
+            self.calls += 1
+            return BackendResult(text="", error="ContextWindowExceededError", exit_code=None)
+
+    sleeps = []
+    monkeypatch.setattr(loop_mod.time, "sleep", lambda s: sleeps.append(s))
+
+    backend = AlwaysBrokenBackend()
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", ms_path=str(tmp_path / "a.ms"), workdir=str(tmp_path), executor="local")
+    loop = Loop(db, backend, LocalExecutor(), max_turns=3, poll_interval=7)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "import_asdm"}}
+
+    results = loop.run_all(["k1"])
+    assert results["k1"]["action"] == "needs_human"
+    # Every failed attempt but the last must have backed off with the
+    # configured poll_interval — a hot loop would record zero sleeps.
+    assert sleeps and all(s == 7 for s in sleeps)
+    assert backend.calls == 3  # bounded by max_turns, not by a runaway retry burst
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # Free space in the brief
 # ---------------------------------------------------------------------------

@@ -71,47 +71,23 @@ scope = ""
 belief_state = false
 
 [backend]
-# claude | opencode | codex | stub
-kind = "claude"
-# `claude -p` is non-interactive: nobody can answer a permission prompt, so a
-# tool that is not listed here is DENIED and the turn fails. The three MCP
-# servers are the driver's whole purpose. Read/Glob/Grep let it consult the
-# skill and read logs; Skill loads the skill itself.
-# The model writes a script and the LOOP executes it. A turn that ran CASA
-# itself would leave no job id, no exit code and no artifact checksum in the
-# journal — the run becomes unauditable, which is the point of the loop.
-#
-# allowed_tools PRE-APPROVES. It does not remove anything, even for a tool
-# absent from the list. disallowed_tools is what actually removes a tool, and
-# ClaudeBackend checks the harness's own system/init event against it on
-# every turn, because a flag that is silently ignored looks exactly like a
-# flag that works.
-allowed_tools = [
-  "mcp__ms-inspect",
-  "mcp__ms-modify",
-  "mcp__ms-create",
-  "Read",
-  "Glob",
-  "Grep",
-  "Skill",
-]
-# Listed here for visibility only — this IS the code default
-# (backends.DEFAULT_DISALLOWED_TOOLS), so deleting these lines changes nothing
-# and a config written before the ban existed is still protected. Set it to []
-# to turn the ban off deliberately.
-disallowed_tools = [
-  "Bash",
-  "Write",
-  "Edit",
-  "NotebookEdit",
-  "Task",
-  "WebFetch",
-  "WebSearch",
-]
-# cmd = "claude"
-# model = "claude-opus-5"
-# mcp_config = "/path/to/.mcp.json"
-# timeout = 1800
+# api | stub
+# claude | opencode | codex still exist (backends.DEPRECATED_BACKEND_KINDS)
+# but are superseded by the native in-process harness below and scheduled
+# for deletion once PLAN_NATIVE_HARNESS.md stage 4's comparison run lands.
+# Using one of them now emits a DeprecationWarning.
+kind = "api"
+# anthropic | openai (openai selects any OpenAI-compatible Chat Completions
+# endpoint via base_url, e.g. TACC, llama.cpp, vLLM)
+provider = "anthropic"
+model = "claude-opus-5"
+# Name of the environment variable holding the key — never the key itself.
+api_key_env = "ANTHROPIC_API_KEY"
+# base_url = "https://ai.tejas.tacc.utexas.edu/v1"   # openai-compatible endpoints
+# cache_ttl = "5m"                                    # anthropic only: 5m | 1h
+# max_rounds = 30
+# max_tokens = 16000
+# temperature = 0.2                                   # openai only
 
 [executor]
 # local | slurm | htcondor
@@ -136,7 +112,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
 
 
 def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
-    backend_cfg = dict(cfg.get("backend") or {"kind": "claude"})
+    backend_cfg = dict(cfg.get("backend") or {"kind": "api"})
     backend_kind = backend_cfg.pop("kind")
     if backend_kind == "stub":
         backend = StubBackend(backend_cfg.get("responses") or [])
@@ -277,13 +253,20 @@ def _resolve_run(
         # whole point of keeping input_path separate.
         is_ms = (Path(input_path) / "table.info").exists()
         run_key = make_run_key(input_path)
+        workdir = Path(args.workdir).absolute()
+        # Every ms_modify tool writes its generated script under workdir with
+        # execute=False; a missing directory fails that write with a raw
+        # FileNotFoundError the model cannot diagnose, so it retries the same
+        # broken plan every turn until max_turns. Create it once, here, so a
+        # bare --workdir path is never a live failure mode.
+        workdir.mkdir(parents=True, exist_ok=True)
         db.create_run(
             run_key,
             input_path=input_path,
             ms_path=input_path if is_ms else "",
-            workdir=str(Path(args.workdir).absolute()),
+            workdir=str(workdir),
             telescope=args.telescope,
-            backend=(cfg.get("backend") or {}).get("kind", "claude"),
+            backend=(cfg.get("backend") or {}).get("kind", "api"),
             executor=(cfg.get("executor") or {}).get("kind", "local"),
         )
         print(run_key)

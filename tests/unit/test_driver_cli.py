@@ -184,6 +184,19 @@ def test_ms_without_workdir_is_refused(project, capsys):
     assert "must be given together" in capsys.readouterr().err
 
 
+def test_run_creates_a_missing_workdir(project):
+    """Every ms_modify tool writes its generated script under workdir with
+    execute=False; a missing directory used to fail that write with a raw
+    FileNotFoundError the model could not diagnose, so it retried the same
+    broken plan every turn until max_turns (observed 2026-09-17, 3C391 run).
+    A bare --workdir path must never be a live failure mode."""
+    write_config(project, [DONE])
+    workdir = project / "does-not-exist-yet"
+    assert not workdir.exists()
+    assert _cli(project, "run", "--ms", str(project / "a.ms"), "--workdir", str(workdir)) == 0
+    assert workdir.is_dir()
+
+
 # --------------------------------------------------------------- the gate
 
 
@@ -362,24 +375,35 @@ def test_input_without_workdir_is_refused(project, capsys):
 
 
 def test_default_config_allows_the_three_mcp_servers(project):
-    """A default config must be able to call the tools the driver exists for."""
+    """The default backend's registry must expose the tools the driver exists
+    for. There is no allow-list for the api backend — the registry only ever
+    holds the three MCP servers' tools plus read_file/submit_decision, so
+    Bash/Write never exist as tool specs at all."""
     import tomllib
+
+    from analyst_driver.skills import default_skill_root
+    from analyst_driver.tools import ToolRegistry
 
     _cli(project, "init")
     with open(project / "config.toml", "rb") as fh:
         cfg = tomllib.load(fh)
-    allowed = cfg["backend"]["allowed_tools"]
-    assert {"mcp__ms-inspect", "mcp__ms-modify", "mcp__ms-create"} <= set(allowed)
-    # the loop executes scripts, not the model
-    assert "Bash" not in allowed and "Write" not in allowed
+    assert cfg["backend"]["kind"] == "api"
+
+    registry = ToolRegistry.default(skill_root=default_skill_root(), read_roots=[project])
+    names = {spec.name for spec in registry.specs()}
+    assert "ms_antenna_list" in names  # ms-inspect
+    assert "ms_gaincal" in names  # ms-modify
+    assert "ms_import_asdm" in names  # ms-create
+    assert "Bash" not in names and "Write" not in names
 
 
-def test_default_config_reaches_the_backend(project):
+def test_default_config_reaches_the_backend(project, monkeypatch):
     """The template value must survive build_loop, not just parse."""
     import tomllib
 
     from analyst_driver.cli import build_loop
 
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
     _cli(project, "init")
     with open(project / "config.toml", "rb") as fh:
         cfg = tomllib.load(fh)
@@ -387,15 +411,17 @@ def test_default_config_reaches_the_backend(project):
     db = DriverDB(project / "runs")
     loop = build_loop(cfg, db)
     db.close()
-    assert "mcp__ms-create" in loop.backend.allowed_tools
+    assert loop.backend.kind == "api"
+    assert loop.backend.model == cfg["backend"]["model"]
 
 
-def test_default_config_scope_is_empty(project):
+def test_default_config_scope_is_empty(project, monkeypatch):
     """An unedited template must behave exactly as no scope did — empty, not absent."""
     import tomllib
 
     from analyst_driver.cli import build_loop
 
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
     _cli(project, "init")
     with open(project / "config.toml", "rb") as fh:
         cfg = tomllib.load(fh)

@@ -151,6 +151,21 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _envelope_is_error(text: str) -> bool:
+    """A script tool's own response envelope, not an exception, is how a
+    precondition failure (missing MODEL_DATA, INSUFFICIENT_METADATA, ...)
+    normally surfaces — ``is_error`` at the ToolResult level stays False for
+    these (PLAN_NATIVE_HARNESS.md §4.4: "an envelope is data"), so the
+    script-budget accounting must read the envelope itself. An unparseable
+    or truncated payload is treated as not-an-error: never gate the model's
+    one-script-per-turn budget on a guess.
+    """
+    try:
+        return json.loads(text).get("status") == "error"
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
 def _result_text(result: Any) -> str:
     """Text of a FastMCP call_tool result: ``(blocks, structured)`` or a list."""
     blocks = result[0] if isinstance(result, tuple) else result
@@ -324,13 +339,22 @@ class ToolRegistry:
             # execute defaults to false in every schema; pin it so the default
             # cannot drift underneath the policy.
             args = {**args, "params": {**args["params"], "execute": False}}
-            turn.script_calls += 1
-            turn.last_script_tool = entry.spec.name
         try:
             result = _run(entry.server.call_tool(entry.spec.name, args))
         except Exception as e:  # noqa: BLE001 — anything from the tool layer is data here
             return f"{type(e).__name__}: {e}", True
-        return _result_text(result), False
+        text = _result_text(result)
+        if entry.cls == "script" and not _envelope_is_error(text):
+            # A precondition failure (e.g. ms_apply_initial_rflag needing
+            # MODEL_DATA first) writes no script and must not consume the
+            # turn's one-script budget — that traps the model into naming a
+            # script that never existed, since R2 then blocks the very call
+            # that would fix the precondition in the same turn (observed
+            # live, 2026-09-17, 3C391 turn 43: setjy blocked after a failed
+            # apply_initial_rflag call, decision named a nonexistent script).
+            turn.script_calls += 1
+            turn.last_script_tool = entry.spec.name
+        return text, False
 
     # ---------------------------------------------------------- read_file
 

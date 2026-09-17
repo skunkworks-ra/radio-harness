@@ -74,6 +74,7 @@ class FakeServer:
         self.calls: list[tuple[str, dict]] = []
         self.big = False
         self.raise_on: set[str] = set()
+        self.error_envelope_on: set[str] = set()
 
     async def list_tools(self):
         ro = ToolAnnotations(readOnlyHint=True)
@@ -97,6 +98,13 @@ class FakeServer:
         self.calls.append((name, arguments))
         if name in self.raise_on:
             raise RuntimeError("boom")
+        if name in self.error_envelope_on:
+            payload = {
+                "status": "error",
+                "error_type": "COMPUTATION_ERROR",
+                "message": "no MODEL_DATA",
+            }
+            return ([TextContent(type="text", text=json.dumps(payload))], payload)
         payload = {"status": "ok", "tool": name, "args": arguments}
         if self.big:
             payload["blob"] = "x" * (RESULT_TEXT_CAP + 100)
@@ -236,6 +244,30 @@ def test_r2_second_script_tool_rejected(fake):
     assert res.is_error and "already called" in res.text and "fake_script" in res.text
     assert turn.rejections["R2"] == 1
     assert [c[0] for c in server.calls] == ["fake_script"]
+
+
+def test_a_failed_script_call_does_not_consume_the_turns_script_budget(fake):
+    """A script tool that returns its own error envelope (e.g. missing
+    MODEL_DATA — a precondition failure, not a transport error) writes no
+    script. R2 must not count that attempt, or the model is trapped: it
+    cannot call the tool that would fix the precondition in the same turn,
+    and is forced to name a script that was never written (observed live,
+    2026-09-17, 3C391 turn 43: ms_setjy blocked after a failed
+    ms_apply_initial_rflag call)."""
+    reg, server, turn, _ = fake
+    server.error_envelope_on.add("fake_script")
+    res = reg.dispatch(_call("fake_script", {"params": {"ms_path": "/a", "workdir": "/w"}}), turn)
+    assert not res.is_error  # an error envelope is data, not a transport failure
+    assert '"status": "error"' in res.text
+    assert turn.script_calls == 0 and turn.last_script_tool is None
+
+    # The fix-it call in the same turn must be allowed, not R2-rejected.
+    res2 = reg.dispatch(
+        _call("fake_script2", {"params": {"ms_path": "/a", "workdir": "/w"}}, "c2"), turn
+    )
+    assert not res2.is_error
+    assert turn.rejections["R2"] == 0
+    assert turn.script_calls == 1 and turn.last_script_tool == "fake_script2"
 
 
 def test_read_only_and_bookkeeping_are_not_capped(fake):

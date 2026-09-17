@@ -130,6 +130,21 @@ class TestCheckSpwCoverage:
         warns = check_spw_coverage("/fake.ms", "3C286", "", "3C147")
         assert any("coverage gap" in w for w in warns)
 
+    def test_unresolved_target_field_warns_instead_of_silently_skipping(self, monkeypatch):
+        """A target_fields token absent from this MS — e.g. the science-target
+        mosaic names checked against a calibrator-only split that never had
+        them (observed live, 2026-09-17, 3C391) — must be a visible warning,
+        never a silent empty return. Silence reads as "coverage verified
+        clean," which is the opposite of what actually happened."""
+        only_bp = [
+            ("3C286", ["CALIBRATE_BANDPASS#ON_SOURCE"], [0, 1]),
+        ]
+        _patch_msmd(monkeypatch, only_bp)
+        warns = check_spw_coverage("/fake.ms", "3C286", "", "3C391 C1,3C391 C2")
+        assert warns  # never []
+        assert all("3C391 C1" in w or "3C391 C2" in w for w in warns)
+        assert all("not" in w.lower() and "check" in w.lower() for w in warns)
+
     def test_msmd_unavailable_degrades(self, monkeypatch):
         @contextmanager
         def boom(_ms_path):

@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -487,9 +488,24 @@ class CodexBackend:
         return res
 
 
+#: CLI-agent-subprocess backends, superseded by ApiBackend (native_harness
+#: stage 3). Kept only until PLAN_NATIVE_HARNESS.md stage 4's real-run
+#: comparison lands; scheduled for deletion in stage 5. Not reachable from
+#: DEFAULT_CONFIG or any code path other than an explicit ``kind=`` in a
+#: hand-edited config.toml.
+DEPRECATED_BACKEND_KINDS = {"claude", "opencode", "codex"}
+
+
 def make_backend(kind: str, **kwargs: Any) -> Backend:
     if kind == "api":
         return ApiBackend(**kwargs)
+    if kind in DEPRECATED_BACKEND_KINDS:
+        warnings.warn(
+            f"backend kind={kind!r} is deprecated in favor of kind='api' "
+            "(PLAN_NATIVE_HARNESS.md stage 5 removes it)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if kind == "claude":
         return ClaudeBackend(**kwargs)
     if kind == "opencode":

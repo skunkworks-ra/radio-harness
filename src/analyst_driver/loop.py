@@ -554,7 +554,18 @@ class Loop:
             self.db.complete_turn(
                 run_key, ordinal, outcome="failed", metrics=extras["harvested_metrics"]
             )
-            return {"action": "turn_failed", "ordinal": ordinal, "reason": reason}
+            # A backend_error means the harness itself failed to produce a
+            # decision (SDK exception, refusal, context overflow) — retrying
+            # with the same payload will not succeed, so run_all must back
+            # off instead of hot-looping through max_turns in seconds.
+            # A missing/invalid decision, in contrast, is worth retrying
+            # immediately: a fresh turn gets a fresh brief and may parse.
+            return {
+                "action": "turn_failed",
+                "ordinal": ordinal,
+                "reason": reason,
+                "backend_error": bool(result.error),
+            }
 
         job_dir = self.db._run_dir(run_key) / "jobs" / f"{ordinal:04d}"
         handle = self.executor.submit(script_path, job_dir)
@@ -632,6 +643,12 @@ class Loop:
                 res = self.step(key, block=False)
                 results[key] = res
                 if res["action"] == "waiting":
+                    waiting.append(key)
+                elif res["action"] == "turn_failed" and res.get("backend_error"):
+                    # The backend itself failed (SDK exception, refusal,
+                    # context overflow) — the same payload will fail again
+                    # immediately, so this sweep made no real progress.
+                    # Back off like "waiting" instead of hot-looping.
                     waiting.append(key)
                 elif res["action"] in ("completed", "turn_failed"):
                     progressed = True

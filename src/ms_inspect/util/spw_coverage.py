@@ -110,24 +110,33 @@ def evaluate_coverage(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_field_ids(msmd, field_sel: str, nfields: int) -> set[int]:
-    """Resolve a CASA field selection (names and/or IDs) to a set of field IDs."""
+def _resolve_field_ids(msmd, field_sel: str, nfields: int) -> tuple[set[int], list[str]]:
+    """Resolve a CASA field selection (names and/or IDs) to a set of field IDs.
+
+    Returns ``(ids, unresolved)``. A name absent from this MS is a real,
+    reportable fact — most often the caller named a field from a different
+    MS (e.g. a science-target name checked against a calibrator-only split)
+    — never silenced. Checked against ``fieldnames()`` first rather than
+    catching the msmd exception, so a miss does not also spam CASA's own
+    SEVERE log once per unresolved token.
+    """
     sel = (field_sel or "").strip()
     if not sel or sel == "*":
-        return set(range(nfields))
+        return set(range(nfields)), []
+    names = set(msmd.fieldnames())
     ids: set[int] = set()
+    unresolved: list[str] = []
     for tok in sel.split(","):
         tok = tok.strip()
         if not tok:
             continue
         if tok.isdigit():
             ids.add(int(tok))
+        elif tok in names:
+            ids.update(int(i) for i in msmd.fieldsforname(tok))
         else:
-            try:
-                ids.update(int(i) for i in msmd.fieldsforname(tok))
-            except Exception:
-                logger.debug("fieldsforname(%r) failed; ignoring token", tok)
-    return ids
+            unresolved.append(tok)
+    return ids, unresolved
 
 
 def _parse_spw_ids(spw_sel: str) -> set[int] | None:
@@ -198,10 +207,22 @@ def check_spw_coverage(
         with open_msmd(ms_path) as msmd:
             nfields = int(msmd.nfields())
             all_ids = set(range(nfields))
-            solve_ids = _resolve_field_ids(msmd, solve_field, nfields)
+            solve_ids, solve_unresolved = _resolve_field_ids(msmd, solve_field, nfields)
+            unresolved_warnings = [
+                f"solve_field token {tok!r} does not name a field in {ms_path}; ignored."
+                for tok in solve_unresolved
+            ]
 
             if target_fields and target_fields.strip():
-                target_ids = _resolve_field_ids(msmd, target_fields, nfields) - solve_ids
+                target_ids_raw, target_unresolved = _resolve_field_ids(msmd, target_fields, nfields)
+                target_ids = target_ids_raw - solve_ids
+                unresolved_warnings.extend(
+                    f"target_fields token {tok!r} does not name a field in {ms_path} "
+                    "(checked against the MS this solve tool actually opened, which may "
+                    "be a calibrator-only split, not the full science MS); SpW coverage "
+                    "for it was NOT checked."
+                    for tok in target_unresolved
+                )
                 inferred = False
             else:
                 target_ids = _intent_targets(msmd, all_ids, solve_ids)
@@ -217,8 +238,12 @@ def check_spw_coverage(
                         "phase-calibrator field names).",
                         ms_path=ms_path,
                     )
-                # Explicit target_fields resolved to nothing useful → nothing to check.
-                return []
+                # Explicit target_fields resolved to nothing this tool could check —
+                # say so; unresolved_warnings already names which tokens and why.
+                return unresolved_warnings or [
+                    "target_fields resolved to no field IDs in this MS; SpW coverage "
+                    "was not checked."
+                ]
 
             def _spws(ids: set[int]) -> set[int]:
                 out: set[int] = set()
@@ -245,4 +270,6 @@ def check_spw_coverage(
         logger.debug("SpW coverage check skipped: msmd unavailable for %s", ms_path)
         return []
 
-    return evaluate_coverage(solve_spws, target_spws, selected_spws, solve_label, target_label)
+    return unresolved_warnings + evaluate_coverage(
+        solve_spws, target_spws, selected_spws, solve_label, target_label
+    )
