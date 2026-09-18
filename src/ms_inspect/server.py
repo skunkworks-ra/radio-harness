@@ -1652,8 +1652,10 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
         "ms_valid, stage_log_present, stages_completed, products_recorded, "
         "intents_populated, calibrators_ms_present, final_solves_completed, "
         "corrected_populated_target and corrected_populated_calibrators "
-        "(reported separately — calibration runs on calibrators.ms), and "
-        "next_recommended_step (categorical label)."
+        "(column presence only; CASA creates CORRECTED_DATA as a copy of DATA), "
+        "applycal_recorded_target and applycal_recorded_calibrators (from the "
+        "stage log, keyed by which MS the applying stage wrote — this is what "
+        "advances the workflow), and next_recommended_step (categorical label)."
     ),
     annotations={
         "title": "Workflow Status",

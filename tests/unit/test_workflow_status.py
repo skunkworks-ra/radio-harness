@@ -245,9 +245,34 @@ def test_final_solves_advance_once_corrected_and_flagged(fake_ms, monkeypatch):
         return _table(colnames=["DATA"])
 
     monkeypatch.setattr(workflow_status, "open_table", _open)
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    # initial_bandpass's applycal writes CORRECTED on calibrators.ms and
+    # records that MS as its product; that row is what advances the stage.
+    _log(workdir, "initial_bandpass", product=str(cal_ms))
 
     assert _run(ms, workdir)["data"]["next_recommended_step"] == "delay_bandpass_gain"
+
+
+def test_initial_bandpass_recorded_on_another_product_does_not_count(fake_ms, monkeypatch):
+    """The caltable rows initial_bandpass also writes are not the applycal."""
+    ms, workdir = fake_ms
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    (ms / "STATE").mkdir()
+
+    def _open(path, *_args, **_kwargs):
+        if path.endswith("/STATE"):
+            return _table(nrows=3, colnames=[])
+        return _table(colnames=["DATA", "CORRECTED_DATA"])
+
+    monkeypatch.setattr(workflow_status, "open_table", _open)
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    _log(workdir, "initial_bandpass", product=str(workdir / "BP0.b"))
+
+    result = _run(ms, workdir)
+    assert result["data"]["next_recommended_step"] == "apply_initial_rflag_then_applycal"
+    assert result["data"]["applycal_recorded_calibrators"]["value"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -298,14 +323,44 @@ def test_disagreement_between_log_and_ms_is_reported_not_resolved(fake_ms, monke
         "gaincal",
         "bandpass",
         "fluxscale",
-        "applycal",
     )
+    _log(workdir, "applycal", product=str(ms))
 
     result = _run(ms, workdir)
     assert any(
         "recorded complete in the stage log, but CORRECTED_DATA is not" in w
         for w in result["warnings"]
     )
+
+
+def test_stale_corrected_column_does_not_pass_for_applycal(fake_ms, monkeypatch):
+    """CASA creates CORRECTED_DATA as a copy of DATA, so a raw MS can carry the
+    column. With applycal recorded only on calibrators.ms, the target still
+    needs applycal — the column must not promote the run to imaging."""
+    ms, workdir = fake_ms
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    (ms / "STATE").mkdir()
+
+    def _open(path, *_args, **_kwargs):
+        if path.endswith("/STATE"):
+            return _table(nrows=3, colnames=[])
+        return _table(colnames=["DATA", "CORRECTED_DATA"])
+
+    monkeypatch.setattr(workflow_status, "open_table", _open)
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    _log(workdir, "initial_bandpass", product=str(cal_ms))
+    _log(workdir, "gaincal", "bandpass", "fluxscale")
+    _log(workdir, "applycal", product=str(cal_ms))
+
+    result = _run(ms, workdir)
+    assert result["data"]["corrected_populated_target"]["value"] is True
+    assert result["data"]["applycal_recorded_target"]["value"] is False
+    assert result["data"]["next_recommended_step"] == "applycal_target"
+
+    _log(workdir, "applycal", product=str(ms))
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "first_image"
 
 
 def test_products_recorded_reports_the_paths_the_run_actually_used(fake_ms, monkeypatch):

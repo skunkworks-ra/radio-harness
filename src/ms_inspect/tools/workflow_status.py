@@ -51,6 +51,18 @@ _TCLEAN = "tclean"
 _FINAL_SOLVES = ("gaincal", "bandpass", "fluxscale")
 
 
+_CORRECTED_NOTE = (
+    "column present. CASA creates CORRECTED_DATA as a copy of DATA, so presence "
+    "does not prove applycal ran; applycal_recorded_* (from the stage log) does."
+)
+
+
+def _recorded_on(entries: list[dict], stage: str, ms: Path) -> bool:
+    """Did a live row of ``stage`` record ``ms`` as its product."""
+    target = str(Path(ms).expanduser().resolve())
+    return any(str(Path(x).expanduser().resolve()) == target for x in products_for(entries, stage))
+
+
 def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
     """Is CORRECTED_DATA present. None (with a reason) if the probe failed.
 
@@ -134,6 +146,14 @@ def run(ms_path: str, workdir: str) -> dict:
     # below a failed probe every later answer would be inferred from an unknown.
     final_solves_done = [s for s in _FINAL_SOLVES if s in done]
 
+    # Whether CORRECTED was written comes from the log, keyed by which MS the
+    # applying stage recorded as its product — not from the column existing.
+    # CASA creates CORRECTED_DATA as a copy of DATA (split, import, simulate),
+    # so presence proves nothing; and a calibrator applycal must not count for
+    # the target. initial_bandpass carries the calibrator-side applycal.
+    applycal_calibrators_done = _recorded_on(entries, _INITIAL_BANDPASS, calibrators_ms)
+    applycal_target_done = _recorded_on(entries, _APPLYCAL, p)
+
     if _IMPORT not in done and not ms_valid:
         next_step = _IMPORT
     elif intents_populated is None:
@@ -148,13 +168,13 @@ def run(ms_path: str, workdir: str) -> dict:
         next_step = _INITIAL_BANDPASS
     elif corrected_calibrators is None:
         next_step = "probe_failed_corrected_calibrators"
-    elif _INITIAL_RFLAG not in done or not corrected_calibrators:
+    elif _INITIAL_RFLAG not in done or not applycal_calibrators_done:
         next_step = "apply_initial_rflag_then_applycal"
     elif len(final_solves_done) < len(_FINAL_SOLVES):
         next_step = "delay_bandpass_gain"
     elif corrected_target is None:
         next_step = "probe_failed_corrected_target"
-    elif _APPLYCAL not in done or not corrected_target:
+    elif not applycal_target_done:
         next_step = "applycal_target"
     elif _TCLEAN not in done:
         next_step = "first_image"
@@ -173,10 +193,16 @@ def run(ms_path: str, workdir: str) -> dict:
     # The log is history and the MS is now. Where they disagree, say so rather
     # than pick a winner: a stage recorded complete whose product no longer
     # shows in the MS is a real event the next reader needs to see.
-    if _APPLYCAL in done and corrected_target is False:
+    if applycal_target_done and corrected_target is False:
         warnings.append(
-            "applycal is recorded complete in the stage log, but CORRECTED_DATA is not"
-            f" present on {ms_str}. The log is history; the MS is current state."
+            "applycal on the target is recorded complete in the stage log, but"
+            f" CORRECTED_DATA is not present on {ms_str}. The log is history; the MS"
+            " is current state."
+        )
+    if applycal_calibrators_done and corrected_calibrators is False:
+        warnings.append(
+            "initial_bandpass's applycal on calibrators.ms is recorded complete in the"
+            f" stage log, but CORRECTED_DATA is not present on {calibrators_ms}."
         )
 
     data = {
@@ -193,7 +219,7 @@ def run(ms_path: str, workdir: str) -> dict:
         "corrected_populated_target": (
             field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_target_error}")
             if corrected_target is None
-            else field(corrected_target)
+            else field(corrected_target, note=_CORRECTED_NOTE)
         ),
         "corrected_populated_calibrators": (
             field(
@@ -202,8 +228,10 @@ def run(ms_path: str, workdir: str) -> dict:
                 note=f"MAIN colnames read failed: {corrected_calibrators_error}",
             )
             if corrected_calibrators is None
-            else field(corrected_calibrators)
+            else field(corrected_calibrators, note=_CORRECTED_NOTE)
         ),
+        "applycal_recorded_target": field(applycal_target_done),
+        "applycal_recorded_calibrators": field(applycal_calibrators_done),
         "final_solves_completed": final_solves_done,
         "workdir": str(wd),
         "next_recommended_step": next_step,

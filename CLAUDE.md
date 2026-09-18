@@ -282,7 +282,7 @@ Environment variable reference:
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
-| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms_present, stages_completed/products_recorded (stage log), corrected_populated_* (column presence only), applycal_recorded_* (stage log, keyed by the MS the applying stage wrote — this advances the workflow), and a categorical `next_recommended_step` |
 | `ms_supersede_stage` | `tools/supersede_stage.py` | Mark every live stage_log row for the named stages as superseded, so `ms_workflow_status` stops counting them as done. The only writing tool in this table — it mutates `analyst.db`, never the MS |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
