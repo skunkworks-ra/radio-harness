@@ -22,6 +22,7 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_observation_info` | centre frequency in Hz |
+| `{MIN_FREQ_HZ}` | `ms_spectral_window_list` | lowest frequency in the imaged SPWs |
 | `{BANDWIDTH_HZ}` | `ms_spectral_window_list` | total bandwidth in Hz |
 | `{DISH_DIAMETER_M}` | `ms_antenna_list` | dish diameter (all antennas same for connected arrays) |
 | `{TELESCOPE}` | `ms_observation_info` | `telescope_name` |
@@ -96,9 +97,11 @@ Default to `'mfs'` unless the user explicitly asks for a cube.
 | `{BANDWIDTH_HZ} / {CENTER_FREQ_HZ} > 0.2` | `'mtmfs'`, `nterms=2` | Wideband; also produces a spectral index map |
 | Otherwise | `'hogbom'` | Default for first-pass |
 
-Multiscale CLEAN is deferred. Run hogbom first; if the residual image shows
-coherent extended structure after the first pass, re-run with `deconvolver='multiscale'`
-and scales derived from the synthesized beam.
+Run hogbom first. Re-run with `deconvolver='multiscale'` if the residual shows
+coherent extended structure, or tclean diverged (stopcode 5/6) on a source
+larger than a few beams. `scales` (pixels): `[0, 1, 3, 9] × beam_pixels`, drop
+any scale larger than the source. `multiscale` without `scales` is hogbom.
+`scales` matters only for `multiscale`/`mtmfs` — do not derive it for hogbom.
 
 ---
 
@@ -118,10 +121,13 @@ value and record it as `{CELL}`.
 
 ## Step 4 — Derive image size
 
-Primary beam FWHM:
+Primary beam FWHM, at `{MIN_FREQ_HZ}` — the widest beam sets the extent:
 ```
+lambda_m       = c / {MIN_FREQ_HZ}
 pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
 ```
+`ms_tclean` measures the same rule and returns it as `field_of_view`; cite its
+`required_arcsec` and `{IMSIZE}` in the decision.
 
 **Always image out to the first primary-beam sidelobe.** Stopping at the FWHM
 leaves bright sources in the first sidelobe (radius ≈ 1.6 × FWHM, where the PB
@@ -384,8 +390,8 @@ ms_tclean(
 )
 ```
 
-Cell size and imsize are derived as in Steps 3–4 using the **highest** frequency
-in the band (smallest beam → finest cell), so every plane is adequately sampled.
+Cell size follows Step 3 at the **highest** frequency (finest cell); image size
+follows Step 4 at the **lowest** (widest beam).
 
 ### Quality gates (per-plane)
 

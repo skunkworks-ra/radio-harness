@@ -212,3 +212,98 @@ class TestCorrectedDataGuardrail:
     ):
         _, warnings = _run(tmp_path, real_ms_calibrated)
         assert not any("Could not verify" in w for w in warnings)
+
+
+class TestScales:
+    def test_scales_rendered_for_multiscale(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path, real_ms_calibrated, deconvolver="multiscale", scales=[0, 4, 12]
+        )
+        assert "scales       = [0, 4, 12]" in script
+        assert not any("ignores scales" in w or "hogbom" in w for w in warnings)
+
+    def test_scales_rendered_for_mtmfs(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path, real_ms_calibrated, deconvolver="mtmfs", nterms=2, scales=[0, 6]
+        )
+        assert "scales       = [0, 6]" in script
+        assert not any("ignores scales" in w or "hogbom" in w for w in warnings)
+
+    def test_scales_with_hogbom_passes_through_and_warns(self, tmp_path, real_ms_calibrated):
+        # CASA ignores it; the warning is so the model stops refining scales it
+        # has decided not to use.
+        script, warnings = _run(tmp_path, real_ms_calibrated, deconvolver="hogbom", scales=[0, 4])
+        assert "scales       = [0, 4]" in script
+        assert any("ignores scales" in w for w in warnings)
+
+    def test_multiscale_without_scales_warns_it_is_hogbom(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(tmp_path, real_ms_calibrated, deconvolver="multiscale")
+        assert "scales       =" not in script
+        assert any("defaults to [0], which is hogbom" in w for w in warnings)
+
+    def test_no_scales_no_warning(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(tmp_path, real_ms_calibrated)
+        assert "scales       =" not in script
+        assert not any("ignores scales" in w or "hogbom" in w for w in warnings)
+
+
+class TestFieldOfView:
+    """The image must hold every selected pointing's first PB sidelobe. The
+    tool measures the requirement from the MS and warns; it never resizes."""
+
+    def _fov(self, tmp_path, real_ms_calibrated, **kwargs):
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work"
+        workdir.mkdir(exist_ok=True)
+        result = run(
+            real_ms_calibrated, str(workdir / "img"), field="0", workdir=str(workdir), **kwargs
+        )
+        return result["data"]["field_of_view"], result.get("warnings", [])
+
+    def test_measurement_is_reported_for_citation(self, tmp_path, real_ms_calibrated):
+        fov, _ = self._fov(tmp_path, real_ms_calibrated)
+        v = fov["value"]
+        assert fov["flag"] == "COMPLETE"
+        assert v["n_fields"] == 1 and v["mosaic_extent_arcsec"] == 0.0
+        assert v["pb_fwhm_arcsec"] > 0 and v["dish_diameter_m"] > 0
+        assert v["required_arcsec"] == pytest.approx(3 * v["pb_fwhm_arcsec"], rel=1e-6)
+
+    def test_short_image_warns_with_numbers_and_keeps_imsize(self, tmp_path, real_ms_calibrated):
+        fov, warnings = self._fov(tmp_path, real_ms_calibrated, cell="1arcsec", imsize=[16, 16])
+        w = [x for x in warnings if "will alias" in x]
+        assert len(w) == 1
+        assert "lowest selected frequency" in w[0]
+        assert f"needs {fov['value']['required_arcsec']:.0f} arcsec" in w[0]
+        assert "imsize as given" in w[0]
+
+    def test_adequate_image_does_not_warn(self, tmp_path, real_ms_calibrated):
+        fov, _ = self._fov(tmp_path, real_ms_calibrated)
+        need = fov["value"]["required_arcsec"]
+        cell = 10.0
+        n = int(-(-need // cell)) + 8
+        _, warnings = self._fov(tmp_path, real_ms_calibrated, cell=f"{cell}arcsec", imsize=[n, n])
+        assert not any("will alias" in x for x in warnings)
+
+    def test_uses_lowest_frequency_of_selected_spws(self):
+        # Widest beam sets the extent: PB FWHM scales as 1/freq.
+        from ms_modify.tclean import _ARCSEC_PER_RAD, _C_M_S
+
+        pb_at = lambda f_hz, d: 1.02 * (_C_M_S / f_hz) / d * _ARCSEC_PER_RAD  # noqa: E731
+        assert pb_at(1.0e9, 25.0) == pytest.approx(2 * pb_at(2.0e9, 25.0))
+
+    def test_composite_rounding(self):
+        from ms_modify.tclean import _next_composite
+
+        assert _next_composite(512) == 512
+        assert _next_composite(561) == 576
+        assert _next_composite(1025) == 1080
+
+    def test_unparseable_cell_skips_the_check(self, tmp_path, real_ms_calibrated):
+        from ms_modify.tclean import _cell_arcsec
+
+        assert _cell_arcsec("4arcsec") == 4.0
+        assert _cell_arcsec("0.5arcmin") == 30.0
+        assert _cell_arcsec("bogus") is None
+        _, warnings = self._fov(tmp_path, real_ms_calibrated, cell="bogus", imsize=[8, 8])
+        assert not any("will alias" in x for x in warnings)

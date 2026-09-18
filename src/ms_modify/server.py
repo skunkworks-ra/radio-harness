@@ -1697,12 +1697,24 @@ class TcleanInput(BaseModel):
     )
     deconvolver: str = Field(
         default="hogbom",
-        description="'hogbom' (default first-pass) or 'mtmfs' for wideband (fractional BW > 20%).",
+        description=(
+            "'hogbom' (default first-pass), 'multiscale' (extended emission; needs scales), "
+            "or 'mtmfs' for wideband (fractional BW > 20%)."
+        ),
     )
     nterms: int | None = Field(
         default=None,
         description="Taylor terms for mtmfs deconvolver (pass 2 for mtmfs; omit for hogbom).",
         ge=1,
+    )
+    scales: list[int] | None = Field(
+        default=None,
+        description=(
+            "Multi-scale component sizes in pixels, e.g. [0, 4, 12, 36] (0 = point), "
+            "derived from the synthesized beam. Used by 'multiscale' and 'mtmfs' only; "
+            "CASA ignores it for 'hogbom', so do not derive scales for a hogbom run. "
+            "'multiscale' without scales is hogbom (CASA defaults to [0])."
+        ),
     )
     gridder: str = Field(
         default="standard",
@@ -1733,7 +1745,9 @@ class TcleanInput(BaseModel):
         default_factory=lambda: [512, 512],
         description=(
             "Image size in pixels [nx, ny]. Must be a composite number (2^a * 3^b * 5^c). "
-            "Derive from primary beam FWHM / cell, rounded up."
+            "Derive from (mosaic extent + 3 x PB FWHM at the lowest selected frequency) / cell, "
+            "rounded up. The tool measures this and warns when imsize x cell is short; "
+            "the response's field_of_view carries the numbers to cite."
         ),
         min_length=2,
         max_length=2,
@@ -1866,6 +1880,7 @@ async def ms_tclean(params: TcleanInput) -> str:
         specmode=params.specmode,
         deconvolver=params.deconvolver,
         nterms=params.nterms,
+        scales=params.scales,
         gridder=params.gridder,
         wprojplanes=params.wprojplanes,
         cfcache=params.cfcache,

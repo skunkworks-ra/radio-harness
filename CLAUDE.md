@@ -351,7 +351,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
-| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise |
+| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise. `scales` (px) for multiscale/mtmfs. Measures the required field of view (mosaic extent + 3×PB FWHM at the lowest selected frequency), returns it as `field_of_view`, warns when imsize×cell is short |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:

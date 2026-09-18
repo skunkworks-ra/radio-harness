@@ -67,6 +67,87 @@ def _script_path(workdir: Path, imagename: str) -> Path:
     return workdir / f"tclean_{stem}.py"
 
 
+_ARCSEC_PER_RAD = 180.0 * 3600.0 / 3.141592653589793
+_C_M_S = 2.998e8
+
+#: Smallest imsize tclean handles well: composite numbers 2^a 3^b 5^c. A prime
+#: or near-prime size makes the FFT crawl.
+_COMPOSITE_SIZES = sorted(
+    {2**a * 3**b * 5**c for a in range(15) for b in range(9) for c in range(7)}
+)
+
+
+def _next_composite(n: int) -> int:
+    for m in _COMPOSITE_SIZES:
+        if m >= n:
+            return m
+    return n
+
+
+def _fov_requirement(ms_str: str, field: str, spw: str) -> dict:
+    """Measure what the image must span to hold every selected pointing's
+    first primary-beam sidelobe.
+
+    Diameter = mosaic extent + 3 x PB FWHM, with the FWHM at the lowest
+    selected frequency, where the beam is widest. Raises on any CASA failure;
+    the caller turns that into one warning.
+    """
+    import numpy as np
+
+    from ms_inspect.util.casa_context import _require_casatools
+
+    casatools = _require_casatools()
+    sel = casatools.ms().msseltoindex(vis=ms_str, field=field, spw=spw)
+    field_ids = [int(i) for i in sel["field"]]
+    spw_ids = [int(i) for i in sel["spw"]]
+
+    with open_table(f"{ms_str}/FIELD") as tb:
+        phase_dir = tb.getcol("PHASE_DIR")  # (2, npoly, nfield), radians
+    if not field_ids:
+        field_ids = list(range(phase_dir.shape[-1]))
+    ra = np.array([phase_dir[0, 0, i] for i in field_ids])
+    dec = np.array([phase_dir[1, 0, i] for i in field_ids])
+
+    with open_table(f"{ms_str}/ANTENNA") as tb:
+        dish_m = float(np.median(tb.getcol("DISH_DIAMETER")))
+
+    with open_table(f"{ms_str}/SPECTRAL_WINDOW") as tb:
+        if not spw_ids:
+            spw_ids = list(range(tb.nrows()))
+        min_freq_hz = min(float(np.min(tb.getcell("CHAN_FREQ", i))) for i in spw_ids)
+
+    lambda_max_m = _C_M_S / min_freq_hz
+    pb_fwhm_arcsec = 1.02 * lambda_max_m / dish_m * _ARCSEC_PER_RAD
+
+    # Bounding box of the pointing centres, on the tangent plane at their mean.
+    dec0 = float(np.mean(dec))
+    dra = (ra - np.mean(ra) + np.pi) % (2 * np.pi) - np.pi
+    extent_ra = float(np.ptp(dra)) * np.cos(dec0) * _ARCSEC_PER_RAD if len(ra) > 1 else 0.0
+    extent_dec = float(np.ptp(dec)) * _ARCSEC_PER_RAD if len(dec) > 1 else 0.0
+    extent_arcsec = max(extent_ra, extent_dec)
+
+    return {
+        "n_fields": len(field_ids),
+        "min_freq_ghz": min_freq_hz / 1e9,
+        "dish_diameter_m": dish_m,
+        "pb_fwhm_arcsec": pb_fwhm_arcsec,
+        "mosaic_extent_arcsec": extent_arcsec,
+        "required_arcsec": extent_arcsec + 3.0 * pb_fwhm_arcsec,
+    }
+
+
+def _cell_arcsec(cell: str) -> float | None:
+    """'4arcsec' -> 4.0; 'arcmin'/'deg' converted; anything else -> None."""
+    import re
+
+    m = re.fullmatch(r"\s*([0-9.]+)\s*(arcsec|arcmin|deg)?\s*", cell)
+    if not m:
+        return None
+    value = float(m.group(1))
+    unit = m.group(2) or "arcsec"
+    return value * {"arcsec": 1.0, "arcmin": 60.0, "deg": 3600.0}[unit]
+
+
 def _build_script(
     workdir: str,
     ms_str: str,
@@ -77,6 +158,7 @@ def _build_script(
     specmode: str,
     deconvolver: str,
     nterms: int | None,
+    scales: list[int] | None,
     gridder: str,
     wprojplanes: int | None,
     cfcache: str | None,
@@ -101,6 +183,8 @@ def _build_script(
         optional_lines += f"    spw          = {spw!r},\n"
     if deconvolver == "mtmfs" and nterms is not None:
         optional_lines += f"    nterms       = {nterms},\n"
+    if scales is not None:
+        optional_lines += f"    scales       = {list(scales)!r},\n"
     if wprojplanes is not None:
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
     if cfcache is not None:
@@ -211,6 +295,7 @@ def run(
     specmode: str = "mfs",
     deconvolver: str = "hogbom",
     nterms: int | None = None,
+    scales: list[int] | None = None,
     gridder: str = "standard",
     wprojplanes: int | None = None,
     cfcache: str | None = None,
@@ -246,8 +331,13 @@ def run(
                      gridder='awp2' — awp2 does not implement conjbeams, and
                      plain 'mfs' needs several major cycles to converge the
                      wideband flux normalization.
-        deconvolver: 'hogbom' or 'mtmfs' (default 'hogbom').
+        deconvolver: 'hogbom', 'multiscale', or 'mtmfs' (default 'hogbom').
         nterms:      Taylor terms for mtmfs (default None; pass 2 for mtmfs).
+        scales:      Multi-scale component sizes in pixels, e.g. [0, 4, 12, 36]
+                     (0 = point). Used by 'multiscale' and 'mtmfs' only; CASA
+                     ignores it for 'hogbom', so do not spend effort deriving
+                     scales for a hogbom run. 'multiscale' without scales is
+                     hogbom under another name (CASA defaults to [0]).
         gridder:     'standard', 'wproject', or 'awp2' (default 'standard').
         wprojplanes: W-projection planes (None = omit; set for wproject/awp2
                      when W-terms are required per Fresnel criterion). If
@@ -258,7 +348,10 @@ def run(
                      Without it, awproject recomputes CFs from scratch on
                      every run — potentially many hours.
         cell:        Cell size string, e.g. '2.5arcsec'.
-        imsize:      Image size as [nx, ny] (default [512, 512]).
+        imsize:      Image size as [nx, ny] (default [512, 512]). The tool
+                     measures the field of view the selection needs (mosaic
+                     extent + 3 x PB FWHM at the lowest selected frequency)
+                     and warns when imsize x cell is short; never resizes.
         weighting:   UV weighting scheme (default 'briggs').
         robust:      Briggs robust parameter (default 0.5).
         niter:       Maximum clean iterations (default 50000).
@@ -333,6 +426,16 @@ def run(
             "recomputed from scratch (potentially hours). Set cfcache to a "
             "persistent path to reuse them across runs."
         )
+    if scales is not None and deconvolver not in ("multiscale", "mtmfs"):
+        warnings.append(
+            f"deconvolver='{deconvolver}' ignores scales; only 'multiscale' and "
+            "'mtmfs' use them. Passed through unchanged."
+        )
+    if deconvolver == "multiscale" and not scales:
+        warnings.append(
+            "deconvolver='multiscale' with no scales: CASA defaults to [0], which "
+            "is hogbom. Pass scales in pixels derived from the synthesized beam."
+        )
     if specmode != "cube" and any(v is not None for v in (nchan, start, width, outframe)):
         warnings.append(
             f"specmode='{specmode}': cube args (nchan/start/width/outframe) are "
@@ -367,6 +470,29 @@ def run(
             ms_path=ms_path,
         )
 
+    # Field-of-view check, warn-only: the image must hold every selected
+    # pointing's first PB sidelobe or the sidelobe sources alias back in.
+    fov: dict = {}
+    try:
+        fov = _fov_requirement(ms_str, field, spw)
+        casa_calls.append("ms.msseltoindex + tb.open(FIELD, ANTENNA, SPECTRAL_WINDOW) [FOV check]")
+    except Exception as exc:
+        warnings.append(f"Could not measure the required field of view: {exc}")
+    cell_as = _cell_arcsec(cell)
+    if fov and cell_as:
+        span_arcsec = min(imsize) * cell_as
+        if span_arcsec < fov["required_arcsec"]:
+            need_px = _next_composite(int(-(-fov["required_arcsec"] // cell_as)))
+            warnings.append(
+                f"imsize {imsize} x cell {cell} spans {span_arcsec:.0f} arcsec, but the "
+                f"selection needs {fov['required_arcsec']:.0f} arcsec: mosaic extent "
+                f"{fov['mosaic_extent_arcsec']:.0f} + 3 x PB FWHM {fov['pb_fwhm_arcsec']:.0f} "
+                f"(at {fov['min_freq_ghz']:.3f} GHz, the lowest selected frequency, "
+                f"{fov['dish_diameter_m']:.0f} m dish, {fov['n_fields']} pointing(s)). "
+                f"Sources in the first PB sidelobe will alias into the image. "
+                f"imsize >= {need_px} covers it. The script uses imsize as given."
+            )
+
     script_file = _script_path(workdir_path, imagename)
     script_content = _build_script(
         workdir=str(workdir_path),
@@ -378,6 +504,7 @@ def run(
         specmode=specmode,
         deconvolver=deconvolver,
         nterms=nterms,
+        scales=scales,
         gridder=gridder,
         wprojplanes=wprojplanes,
         cfcache=cfcache if gridder == "awproject" else None,
@@ -397,11 +524,22 @@ def run(
     script_file.write_text(script_content)
     casa_calls.append(f"write_script → {script_file}")
 
+    fov_field = (
+        fmt_field(
+            {k: round(v, 3) if isinstance(v, float) else v for k, v in fov.items()},
+            note="what the image must span (arcsec) to hold every selected pointing's first PB sidelobe",
+        )
+        if fov
+        else fmt_field(
+            None, flag="UNAVAILABLE", note="field-of-view measurement failed; see warnings"
+        )
+    )
     if not execute:
         data = {
             "script_path": fmt_field(str(script_file)),
             "imagename": fmt_field(imagename),
             "completed": fmt_field(False, note="script not yet executed"),
+            "field_of_view": fov_field,
         }
         warnings.append(
             f"Script written to {script_file}. Run it externally as a background job; "
@@ -448,6 +586,8 @@ def run(
     )
     if deconvolver == "mtmfs" and nterms is not None:
         tclean_kwargs["nterms"] = nterms
+    if scales is not None:
+        tclean_kwargs["scales"] = list(scales)
     if wprojplanes is not None:
         tclean_kwargs["wprojplanes"] = wprojplanes
     if cfcache is not None and gridder == "awproject":
@@ -500,6 +640,7 @@ def run(
         "script_path": fmt_field(str(script_file)),
         "imagename": fmt_field(imagename),
         "completed": fmt_field(completed),
+        "field_of_view": fov_field,
         "converged": fmt_field(
             converged, flag="COMPLETE" if stopcode is not None else "UNAVAILABLE"
         ),
