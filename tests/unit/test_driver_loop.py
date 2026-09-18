@@ -900,18 +900,26 @@ def test_an_existing_ms_path_is_never_overwritten(tmp_path):
 # ------------------------------------------------------ backend permissions
 
 
+_MCP = Path("/tmp/turn/mcp.json")
+_SP = Path("/tmp/turn/system_prompt.md")
+
+
+def _claude_args(**kw) -> list[str]:
+    return ClaudeBackend(_system_prompt="", **kw)._args(_MCP, _SP)
+
+
 def test_claude_backend_passes_allowed_tools():
-    args = ClaudeBackend(allowed_tools=["mcp__ms-create", "Read"])._args()
+    args = _claude_args(allowed_tools=["mcp__ms-create", "Read"])
     assert "--allowedTools" in args
-    assert args[args.index("--allowedTools") + 1] == "mcp__ms-create,Read"
+    assert args[args.index("--allowedTools") + 1] == "mcp__analyst__*,mcp__ms-create,Read"
 
 
-def test_claude_backend_omits_the_flag_when_unset():
-    assert "--allowedTools" not in ClaudeBackend()._args()
-
-
-def test_claude_backend_empty_list_omits_the_flag():
-    assert "--allowedTools" not in ClaudeBackend(allowed_tools=[])._args()
+def test_claude_backend_always_pre_approves_the_harness_tools():
+    """claude -p denies any tool not on the allow list, so the harness's own
+    MCP tools are on it whether or not a config names anything else."""
+    for kw in ({}, {"allowed_tools": []}):
+        args = _claude_args(**kw)
+        assert args[args.index("--allowedTools") + 1] == "mcp__analyst__*"
 
 
 def test_claude_backend_never_puts_the_prompt_in_argv():
@@ -920,8 +928,10 @@ def test_claude_backend_never_puts_the_prompt_in_argv():
     The earlier version of this test asserted the prompt was the LAST argument,
     which is exactly the arrangement that broke. The prompt goes on stdin.
     """
-    args = ClaudeBackend(allowed_tools=["Read"])._args()
-    assert not any("prompt" in a for a in args)
+    args = _claude_args(allowed_tools=["Read"])
+    # _args takes no prompt at all; the only "prompt" on argv is the system
+    # prompt FILE flag, which claude reads from disk.
+    assert [a for a in args if "prompt" in a] == ["--append-system-prompt-file", str(_SP)]
     # --disallowedTools now follows the allow list, so the allow list is no
     # longer last. The property that matters is unchanged: no argv entry is the
     # prompt, because --allowedTools is variadic and would swallow it.
@@ -938,7 +948,7 @@ def test_claude_backend_sends_the_prompt_on_stdin(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout='{"type":"result"}', stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    ClaudeBackend(allowed_tools=["Read"]).run("THE BRIEF", tmp_path)
+    ClaudeBackend(allowed_tools=["Read"], _system_prompt="").run("THE BRIEF", tmp_path)
     assert seen["input"] == "THE BRIEF"
     assert "THE BRIEF" not in seen["args"]
 
@@ -952,7 +962,7 @@ def test_backend_failure_is_recorded_not_swallowed(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    res = ClaudeBackend().run("brief", tmp_path)
+    res = ClaudeBackend(_system_prompt="").run("brief", tmp_path)
     assert res.exit_code == 1
     assert "Input must be provided" in res.error
 
@@ -962,19 +972,43 @@ def test_zero_exit_with_no_output_is_still_a_failure(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout="   \n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    res = ClaudeBackend().run("brief", tmp_path)
-    assert res.error == "exited 0 with no output"
+    res = ClaudeBackend(_system_prompt="").run("brief", tmp_path)
+    assert "exited 0 with no output" in res.error
+
+
+def _write_turn_state(args: list[str], state: dict) -> None:
+    """What the tool server does during a real turn: the state file appears
+    at the path the MCP config handed it."""
+    cfg = json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())
+    Path(cfg["mcpServers"]["analyst"]["env"]["ANALYST_TURN_STATE"]).write_text(json.dumps(state))
 
 
 def test_successful_run_records_no_error(tmp_path, monkeypatch):
     def fake_run(args, **kw):
+        _write_turn_state(args, {"decision": {"done": True}, "decision_source": "tool"})
         return subprocess.CompletedProcess(
-            args, 0, stdout='{"type":"result","result":"{\\"done\\": true}"}', stderr=""
+            args, 0, stdout='{"type":"result","result":""}', stderr=""
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    res = ClaudeBackend().run("brief", tmp_path)
+    res = ClaudeBackend(_system_prompt="").run("brief", tmp_path)
     assert res.error is None and res.exit_code == 0
+    assert json.loads(res.text) == {"done": True}
+
+
+def test_a_turn_without_the_tool_server_is_a_backend_failure(tmp_path, monkeypatch):
+    """claude exited 0 with a result, but no state file: it ran with no
+    harness tool, so nothing it did is in the journal."""
+
+    def fake_run(args, **kw):
+        return subprocess.CompletedProcess(
+            args, 0, stdout='{"type":"result","result":"ok"}', stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    res = ClaudeBackend(_system_prompt="").run("brief", tmp_path)
+    assert res.exit_code == 0
+    assert "tool server never started" in res.error
 
 
 def test_turn_reports_the_backend_failure_reason(tmp_path):

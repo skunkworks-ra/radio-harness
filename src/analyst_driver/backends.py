@@ -9,8 +9,9 @@ never a run failure.
 
 Capability notes per backend:
 
-- ``claude -p --output-format stream-json --verbose`` — full event stream:
-  tool calls, tool results, model, token usage.
+- ``claude -p --output-format stream-json --verbose`` — the harness tool
+  registry served over MCP (``tools_server``); decision and tool calls from
+  the server's state file, model and token usage from the event stream.
 - ``opencode run --format json`` — raw JSON events; tool events extracted
   best-effort.
 - ``codex exec --json`` — event stream (unverified here; codex is not
@@ -23,10 +24,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+from analyst_driver.tools_server import SERVER_NAME as TOOLS_SERVER_NAME
 
 
 @dataclass
@@ -237,16 +242,28 @@ DEFAULT_DISALLOWED_TOOLS = [
 
 
 class ClaudeBackend:
+    """``claude -p`` as the inner loop; the harness tool registry over MCP.
+
+    The one reason this backend exists next to ``ApiBackend``: ``claude -p``
+    runs on a claude.ai subscription, which the Messages API cannot. The
+    tools, policy, skills and decision are the harness's own in both: this
+    backend serves the registry to ``claude`` through ``tools_server`` and
+    reads the turn back from the state file that server writes. Only the
+    transport differs.
+    """
+
     kind = "claude"
 
     def __init__(
         self,
         cmd: str = "claude",
-        mcp_config: str | None = None,
         model: str | None = None,
         timeout: float | None = None,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
+        skill_root: str | Path | None = None,
+        read_roots: list[str | Path] | None = None,
+        _system_prompt: str | None = None,
     ):
         """``allowed_tools`` becomes ``--allowedTools``, ``disallowed_tools``
         ``--disallowedTools``.
@@ -254,14 +271,15 @@ class ClaudeBackend:
         ``claude -p`` is non-interactive, so there is nobody to answer a
         permission prompt: any tool not on the allow list is DENIED, and the
         turn comes back as a refusal the driver can only record and retry.
-        Without it the driver cannot call a single ms_modify or ms_create tool,
-        which is every tool it exists to call.
+        The harness's MCP tools are always on the allow list; ``allowed_tools``
+        adds to that.
 
         The two flags are NOT opposites. ``--allowedTools`` PRE-APPROVES; it
         does not remove anything. Removing a tool takes ``--disallowedTools``.
         """
+        from analyst_driver.skills import default_skill_root, system_prompt
+
         self.cmd = cmd
-        self.mcp_config = mcp_config
         self.model = model
         self.timeout = timeout
         self.allowed_tools = list(allowed_tools) if allowed_tools else []
@@ -271,8 +289,13 @@ class ClaudeBackend:
         self.disallowed_tools = (
             list(DEFAULT_DISALLOWED_TOOLS) if disallowed_tools is None else list(disallowed_tools)
         )
+        self.skill_root = Path(skill_root) if skill_root else default_skill_root()
+        self.read_roots = [Path(p) for p in (read_roots or [])]
+        self.system_prompt = (
+            _system_prompt if _system_prompt is not None else system_prompt(self.skill_root)
+        )
 
-    def _args(self) -> list[str]:
+    def _args(self, mcp_config: Path, system_prompt_file: Path) -> list[str]:
         """The command line. The prompt is NOT here — it goes on stdin.
 
         ``--allowedTools <tools...>`` is variadic: it consumes every argument
@@ -280,35 +303,62 @@ class ClaudeBackend:
         as another tool name and claude exits 1 with "Input must be provided
         either through stdin or as a prompt argument". stdin also removes any
         argv length limit on a long brief.
+
+        ``--bare`` is not used: it drops the subscription login and needs an
+        API key, which defeats this backend. ``--strict-mcp-config`` and an
+        empty ``--setting-sources`` are the next best thing — no MCP server,
+        hook or permission rule from the host's own configuration reaches
+        the turn.
         """
         args = [self.cmd, "-p", "--output-format", "stream-json", "--verbose"]
-        if self.mcp_config:
-            args += ["--mcp-config", self.mcp_config]
+        args += ["--append-system-prompt-file", str(system_prompt_file)]
+        args += ["--mcp-config", str(mcp_config), "--strict-mcp-config"]
+        args += ["--setting-sources", ""]
         if self.model:
             args += ["--model", self.model]
-        if self.allowed_tools:
-            args += ["--allowedTools", ",".join(self.allowed_tools)]
+        allowed = [f"mcp__{TOOLS_SERVER_NAME}__*", *self.allowed_tools]
+        args += ["--allowedTools", ",".join(allowed)]
         if self.disallowed_tools:
             args += ["--disallowedTools", ",".join(self.disallowed_tools)]
         return args
 
+    def _mcp_config(self, workdir: Path, state_path: Path) -> dict[str, Any]:
+        from analyst_driver import tools_server as ts
+
+        env = {
+            ts.WORKDIR_ENV: str(workdir),
+            ts.STATE_ENV: str(state_path),
+            ts.SKILL_ROOT_ENV: str(self.skill_root),
+            ts.READ_ROOTS_ENV: os.pathsep.join(str(p) for p in self.read_roots),
+        }
+        return {
+            "mcpServers": {
+                TOOLS_SERVER_NAME: {
+                    "command": sys.executable,
+                    "args": ["-m", "analyst_driver.tools_server"],
+                    "env": env,
+                }
+            }
+        }
+
     def run(self, prompt: str, workdir: str | Path, *, ms_path: str | None = None) -> BackendResult:
-        # The sense hook (hooks/sense.py) reads this to know which MS a
-        # workdir-glob fallback can't reliably identify on its own — a run
-        # already knows its own ms_path, so pass it rather than let the hook
-        # guess. Unset (not "") when there is none yet, e.g. before import.
-        env = None
-        if ms_path:
-            env = {**os.environ, "ANALYST_MS_PATH": ms_path}
-        out = subprocess.run(
-            self._args(),
-            input=prompt,
-            capture_output=True,
-            text=True,
-            cwd=str(workdir),
-            timeout=self.timeout,
-            env=env,
-        )
+        workdir = Path(workdir)
+        with tempfile.TemporaryDirectory(prefix="analyst-turn-") as tmp:
+            tmpdir = Path(tmp)
+            state_path = tmpdir / "turn_state.json"
+            mcp_config = tmpdir / "mcp.json"
+            mcp_config.write_text(json.dumps(self._mcp_config(workdir, state_path), indent=1))
+            system_prompt_file = tmpdir / "system_prompt.md"
+            system_prompt_file.write_text(self.system_prompt)
+            out = subprocess.run(
+                self._args(mcp_config, system_prompt_file),
+                input=prompt,
+                capture_output=True,
+                text=True,
+                cwd=str(workdir),
+                timeout=self.timeout,
+            )
+            state = self._read_state(state_path)
         res = _with_failure(self.parse(out.stdout), out)
         leaked = self.banned_tools_offered(res.tool_names_offered)
         if leaked:
@@ -318,7 +368,26 @@ class ClaudeBackend:
                 " The turn could have run CASA itself, so nothing it did is in the journal."
                 + (f" ({res.error})" if res.error else "")
             )
+        if state is None:
+            res.error = "the harness tool server never started, so the turn had no tools" + (
+                f" ({res.error})" if res.error else ""
+            )
+            return res
+        # The same mapping ApiBackend.run makes from its TurnState: the full
+        # tool results (the event stream truncates them) and the decision as
+        # the trailing JSON object parse_decision reads.
+        res.tool_calls = list(state.get("tool_calls") or [])
+        decision = state.get("decision")
+        if decision is not None and state.get("decision_source") == "tool":
+            res.text = (res.text + "\n" if res.text else "") + json.dumps(decision, sort_keys=True)
         return res
+
+    @staticmethod
+    def _read_state(path: Path) -> dict[str, Any] | None:
+        try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
 
     def banned_tools_offered(self, offered: list[str] | None) -> set[str]:
         """Which banned tools the harness actually offered this turn.
@@ -488,12 +557,12 @@ class CodexBackend:
         return res
 
 
-#: CLI-agent-subprocess backends, superseded by ApiBackend (native_harness
-#: stage 3). Kept only until PLAN_NATIVE_HARNESS.md stage 4's real-run
-#: comparison lands; scheduled for deletion in stage 5. Not reachable from
-#: DEFAULT_CONFIG or any code path other than an explicit ``kind=`` in a
-#: hand-edited config.toml.
-DEPRECATED_BACKEND_KINDS = {"claude", "opencode", "codex"}
+#: CLI-agent-subprocess backends superseded by ApiBackend and not adapted to
+#: the harness tool registry: their turns see no submit_decision and no
+#: read_file. Not reachable from DEFAULT_CONFIG or any code path other than an
+#: explicit ``kind=`` in a hand-edited config.toml. ClaudeBackend is not among
+#: them: it is the subscription path and is maintained.
+DEPRECATED_BACKEND_KINDS = {"opencode", "codex"}
 
 
 def make_backend(kind: str, **kwargs: Any) -> Backend:
@@ -501,7 +570,7 @@ def make_backend(kind: str, **kwargs: Any) -> Backend:
         return ApiBackend(**kwargs)
     if kind in DEPRECATED_BACKEND_KINDS:
         warnings.warn(
-            f"backend kind={kind!r} is deprecated in favor of kind='api' "
+            f"backend kind={kind!r} is deprecated in favor of kind='api' or 'claude' "
             "(PLAN_NATIVE_HARNESS.md stage 5 removes it)",
             DeprecationWarning,
             stacklevel=2,

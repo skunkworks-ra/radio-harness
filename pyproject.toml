@@ -43,6 +43,7 @@ ms-inspect = "ms_inspect.server:main"
 ms-modify = "ms_modify.server:main"
 ms-create = "ms_create.server:main"
 analyst-driver = "analyst_driver.cli:main"
+analyst-driver-tools = "analyst_driver.tools_server:main"
 
 # ---------------------------------------------------------------------------
 # Hatch — source layout

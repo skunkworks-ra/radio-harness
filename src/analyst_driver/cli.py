@@ -71,11 +71,13 @@ scope = ""
 belief_state = false
 
 [backend]
-# api | stub
-# claude | opencode | codex still exist (backends.DEPRECATED_BACKEND_KINDS)
-# but are superseded by the native in-process harness below and scheduled
-# for deletion once PLAN_NATIVE_HARNESS.md stage 4's comparison run lands.
-# Using one of them now emits a DeprecationWarning.
+# api | claude | stub
+# api: the harness's own loop over a provider's HTTP API (token billing).
+# claude: the same tools and skills served to `claude -p` over MCP; runs on a
+#   claude.ai subscription. Options: model, cmd, timeout, allowed_tools,
+#   disallowed_tools. The provider/api_key_env keys below do not apply.
+# opencode | codex still exist (backends.DEPRECATED_BACKEND_KINDS) but see
+#   none of the harness tools; using one emits a DeprecationWarning.
 kind = "api"
 # anthropic | openai (openai selects any OpenAI-compatible Chat Completions
 # endpoint via base_url, e.g. TACC, llama.cpp, vLLM)
@@ -116,7 +118,7 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
     backend_kind = backend_cfg.pop("kind")
     if backend_kind == "stub":
         backend = StubBackend(backend_cfg.get("responses") or [])
-    elif backend_kind == "api":
+    elif backend_kind in ("api", "claude"):
         # Job logs live under the run root, outside the work directory; the
         # model reads them with read_file, so the run root is a read root.
         backend = make_backend(backend_kind, read_roots=[db.run_root], **backend_cfg)

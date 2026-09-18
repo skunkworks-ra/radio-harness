@@ -28,8 +28,9 @@ Verified against `radio-harness` `main` at `e7a3aff` (1123 unit tests pass).
 | Executors: local, SLURM, HTCondor | `analyst_driver/executors.py` | unchanged |
 | CLI, `config.toml` | `analyst_driver/cli.py` | `[backend] kind = "api"` added; old kinds removed at the end |
 | Backend contract `Backend.run(prompt, workdir, *, ms_path) -> BackendResult` | `analyst_driver/backends.py` | **kept as the seam**; new `ApiBackend` implements it |
-| `ClaudeBackend`, `OpencodeBackend`, `CodexBackend` | `backends.py` | removed (last stage) |
-| Tool ban (`DEFAULT_DISALLOWED_TOOLS`, `tools_ban_violated`, `banned_tools_offered`) | `backends.py` | removed — there is nothing to ban |
+| `ClaudeBackend` | `backends.py` | **kept** (decision reversed 2026-09-17, see §6): the subscription path. Serves the harness registry to `claude -p` over MCP (`tools_server.py`); same skills, tools, policy and decision as `ApiBackend` |
+| `OpencodeBackend`, `CodexBackend` | `backends.py` | removed (last stage) |
+| Tool ban (`DEFAULT_DISALLOWED_TOOLS`, `tools_ban_violated`, `banned_tools_offered`) | `backends.py` | kept for `ClaudeBackend` only |
 | Hooks (`hooks/sense.py`, `hooks/gate.py`, `hooks.json`, `sense_log`) | `hooks/`, `ms_inspect/util/sense_log.py` | removed — the loop stands where the hook fired |
 | Claude Code plugin packaging (`.claude/`, `plugin.json`, `.mcp.json`, `bin/install-local.sh`) | repo root | removed from the driver path; see §7 |
 | MCP servers `ms-inspect`, `ms-modify`, `ms-create` | `src/ms_*/server.py` | **unchanged**; still usable interactively from Claude Code. The harness imports their registries in-process |
@@ -192,9 +193,19 @@ is the only lever we hold; TACC's server configuration is unverified.
   the tools; in-process import removes three processes, startup cost, and a
   transport, and gives the same schemas. Rejected for v1; the registry
   interface would allow it later.
-- **Keep `claude -p` as one backend among several.** Would keep hooks, plugin
-  packaging and the ban list alive for one path. Rejected: the user asked
-  for the dependency removed.
+- **Keep `claude -p` as one backend among several.** Rejected on 2026-09-16
+  (would keep hooks, plugin packaging and the ban list alive for one path),
+  **reversed on 2026-09-17**: the Messages API bills per token only and no
+  SDK path reaches a claude.ai subscription; non-bare `claude -p` does. Kept
+  in the narrowest form: `tools_server.py` serves the harness `ToolRegistry`
+  over stdio MCP, `ClaudeBackend` hands `claude -p` that server
+  (`--mcp-config` + `--strict-mcp-config`), the skills system prompt
+  (`--append-system-prompt-file`) and no host settings
+  (`--setting-sources ""`), and reads the turn's `TurnState` from the state
+  file the server writes. Hooks and plugin packaging still go; the ban list
+  stays. Residual differences: `claude` keeps its own Read/Glob/Grep, and
+  there is no prompt-cache control or automated end-to-end test of the
+  real `claude` binary.
 
 ## 7. Side-effects to expect
 

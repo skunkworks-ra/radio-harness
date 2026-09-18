@@ -28,10 +28,9 @@ from pathlib import Path
 def _discover_ms_path(workdir: str) -> str | None:
     """Env var if the driver set one; otherwise the one non-calibrators MS.
 
-    `ClaudeBackend` sets `ANALYST_MS_PATH` once a run has an MS (backends.py).
-    The glob fallback remains for callers that don't set it (an older backend,
-    or before import, when there is no MS yet) and degrades to None rather
-    than guessing when a workdir holds more than one candidate.
+    No driver backend sets `ANALYST_MS_PATH` any more; the hook does not run
+    under the driver. A caller may still set it. The glob fallback degrades
+    to None rather than guessing when a workdir holds more than one candidate.
     """
     env_path = os.environ.get("ANALYST_MS_PATH")
     if env_path:

@@ -447,15 +447,14 @@ it — add one `test_driver_loop.py` case using `ApiBackend` over
 
 ## 7. Stage 5 — removal and doc sync
 
-Delete: `ClaudeBackend`, `OpencodeBackend`, `CodexBackend`,
-`DEFAULT_DISALLOWED_TOOLS`, `banned_tools_offered`, `tools_ban_violated`,
-`tool_names_offered` (and their tests in `test_driver_backends.py`);
+Keep `ClaudeBackend` and the tool ban (`DEFAULT_DISALLOWED_TOOLS`,
+`banned_tools_offered`, `tools_ban_violated`, `tool_names_offered`) — the
+subscription path, DESIGN §6. Delete: `OpencodeBackend`, `CodexBackend`;
 `hooks/`, `hooks.json`; `src/ms_inspect/util/sense_log.py` +
 `tests/unit/test_sense_log.py`; `.claude/settings.json`,
 `.claude/commands/`, `plugin.json`/`marketplace.json` if present;
 `bin/install-local.sh`, `bin/uninstall-local.sh`. Keep `bin/serve*.sh`.
-`DEFAULT_CONFIG`: `[backend]` becomes §3.4 verbatim; remove
-`allowed_tools`/`disallowed_tools` prose. `README.md`: replace plugin
+`DEFAULT_CONFIG`: `[backend]` becomes §3.4 plus the `claude` kind. `README.md`: replace plugin
 install + `claude -p` sections with the `[backend]` table and the
 `ANTHROPIC_API_KEY`/`TACC_API_KEY` note. `CLAUDE.md`: rewrite the driver
 section to DESIGN §3. `docs/handoff.md`/`session_context.md`: mark the hook
@@ -467,8 +466,8 @@ deleted tests; report the count.
 - `pixi run pytest tests/unit -q` passes; count reported; ruff clean.
 - Stage 4 tables exist and show `tokens_cache_read > 0` on Anthropic and a
   completed calibration-only run on both providers.
-- `grep -rn "claude -p\|opencode\|codex exec\|disallowedTools\|sense_log" src
-  tests README.md CLAUDE.md` returns nothing.
+- `grep -rn "opencode\|codex exec\|sense_log" src tests README.md CLAUDE.md`
+  returns nothing.
 - `loop.py` diff is confined to the brief template strings.
 
 ## 9. Decisions already made — do not reopen
