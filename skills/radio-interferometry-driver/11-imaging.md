@@ -241,6 +241,27 @@ tclean will stop at this level or at `niter`, whichever comes first.
 Set `niter=50000` as the default upper bound. Adjust down for quick diagnostic
 runs (`niter=1000`).
 
+On a re-run after a first pass, set the threshold from the measured residual:
+3 × the MAD of `.residual`. The radiometer figure ignores flagging and
+extended emission and is usually unreachable.
+
+---
+
+## Step 7b — Major-cycle control and masking
+
+`cyclefactor`: how deep each minor cycle goes before tclean returns to the
+visibilities. Leave it unset on a first pass. Raise it to 2–3 when the field
+holds emission larger than a few beams: long minor cycles on an imperfect
+PSF put flux in the wrong place. Cost: more major cycles.
+
+`usemask='pb'`, `pbmask=0.01`: confine CLEAN to the primary-beam footprint.
+Set it on every run with `pblimit<0` (the default), which images past the
+beam. If CLEAN still finds flux at the edge, make the image larger (Step 4);
+do not tighten the mask.
+
+Divergence (stopcode 5/6): re-run with multiscale (Step 2), `cyclefactor`
+2–3, the pb mask, and the Step 7 re-run threshold.
+
 ---
 
 ## Step 8 — Call ms_tclean
@@ -263,6 +284,10 @@ ms_tclean(
     niter        = 50000,
     threshold    = {threshold},
     pbcor        = True,
+    usemask      = 'pb',
+    pbmask       = 0.01,
+    cyclefactor  = {cyclefactor},  # only on a re-run, Step 7b
+    scales       = {scales},       # only with multiscale/mtmfs, Step 2
     savemodel    = 'modelcolumn',
     workdir      = {WORKDIR},
     execute      = False,
@@ -295,7 +320,7 @@ Quality gates:
 | `rms_jy` | Within 2× of radiometer estimate | > 2×: residual RFI or calibration artefacts; check CORRECTED column |
 | `dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
-| `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
+| `peak_jy` | Positive, above threshold | stopcode 5/6 or negative peak > rms: diverged → Step 7b |
 
 If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,

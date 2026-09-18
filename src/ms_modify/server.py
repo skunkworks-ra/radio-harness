@@ -1707,6 +1707,24 @@ class TcleanInput(BaseModel):
         description="Taylor terms for mtmfs deconvolver (pass 2 for mtmfs; omit for hogbom).",
         ge=1,
     )
+    cyclefactor: float | None = Field(
+        default=None,
+        description=(
+            "Major-cycle trigger. Omit for a first pass. 2-3 for emission larger than "
+            "a few beams or after a divergence (stopcode 5/6)."
+        ),
+        gt=0,
+    )
+    usemask: str | None = Field(
+        default=None,
+        description="CLEAN mask: 'pb' (with pbmask), 'user', or 'auto-multithresh'. Omit for none.",
+    )
+    pbmask: float | None = Field(
+        default=None,
+        description="Primary-beam gain cutoff for usemask='pb', e.g. 0.01. Ignored otherwise.",
+        ge=0,
+        le=1,
+    )
     scales: list[int] | None = Field(
         default=None,
         description=(
@@ -1881,6 +1899,9 @@ async def ms_tclean(params: TcleanInput) -> str:
         deconvolver=params.deconvolver,
         nterms=params.nterms,
         scales=params.scales,
+        cyclefactor=params.cyclefactor,
+        usemask=params.usemask,
+        pbmask=params.pbmask,
         gridder=params.gridder,
         wprojplanes=params.wprojplanes,
         cfcache=params.cfcache,

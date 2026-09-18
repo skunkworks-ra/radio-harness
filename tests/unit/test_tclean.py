@@ -307,3 +307,24 @@ class TestFieldOfView:
         assert _cell_arcsec("bogus") is None
         _, warnings = self._fov(tmp_path, real_ms_calibrated, cell="bogus", imsize=[8, 8])
         assert not any("will alias" in x for x in warnings)
+
+
+class TestMajorCycleAndMask:
+    def test_all_three_rendered(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path, real_ms_calibrated, cyclefactor=2.5, usemask="pb", pbmask=0.01
+        )
+        assert "cyclefactor  = 2.5" in script
+        assert "usemask      = 'pb'" in script
+        assert "pbmask       = 0.01" in script
+        assert not any("pbmask applies" in w for w in warnings)
+
+    def test_unset_means_absent(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated)
+        for key in ("cyclefactor", "usemask", "pbmask"):
+            assert f"{key:<12} =" not in script
+
+    def test_pbmask_without_pb_mask_warns_and_passes_through(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(tmp_path, real_ms_calibrated, usemask="user", pbmask=0.2)
+        assert "pbmask       = 0.2" in script
+        assert any("pbmask applies to usemask='pb' only" in w for w in warnings)

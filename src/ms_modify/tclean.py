@@ -170,6 +170,9 @@ def _build_script(
     threshold: str,
     savemodel: str,
     pblimit: float,
+    cyclefactor: float | None,
+    usemask: str | None,
+    pbmask: float | None,
     nchan: int | None,
     start: str | None,
     width: str | None,
@@ -189,6 +192,12 @@ def _build_script(
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
     if cfcache is not None:
         optional_lines += f"    cfcache      = {cfcache!r},\n"
+    if cyclefactor is not None:
+        optional_lines += f"    cyclefactor  = {cyclefactor},\n"
+    if usemask is not None:
+        optional_lines += f"    usemask      = {usemask!r},\n"
+    if pbmask is not None:
+        optional_lines += f"    pbmask       = {pbmask},\n"
     # Cube channelization — only meaningful for specmode='cube'.
     if specmode == "cube":
         if nchan is not None:
@@ -307,6 +316,9 @@ def run(
     threshold: str = "1.0mJy",
     savemodel: str = "modelcolumn",
     pblimit: float = -0.01,
+    cyclefactor: float | None = None,
+    usemask: str | None = None,
+    pbmask: float | None = None,
     nchan: int | None = None,
     start: str | None = None,
     width: str | None = None,
@@ -362,6 +374,13 @@ def run(
                      spotting outliers). CASA's own default is 0.2, which blanks
                      everything below 20% PB.
         savemodel:   'modelcolumn' writes MODEL_DATA for self-cal (default).
+        cyclefactor: Major-cycle trigger; None lets CASA default. Raise to 2-3
+                     for emission larger than a few beams or after a
+                     divergence.
+        usemask:     CLEAN mask mode: 'user', 'pb', or 'auto-multithresh'.
+                     None lets CASA default (no mask).
+        pbmask:      Primary-beam gain cutoff for usemask='pb', e.g. 0.01.
+                     Ignored by other mask modes (warned).
         nchan:       Number of output channels for the cube (specmode='cube'
                      only; None = all). For a polarization frequency cube,
                      one plane per SPW-chunk per skill 11.
@@ -435,6 +454,10 @@ def run(
         warnings.append(
             "deconvolver='multiscale' with no scales: CASA defaults to [0], which "
             "is hogbom. Pass scales in pixels derived from the synthesized beam."
+        )
+    if pbmask is not None and usemask != "pb":
+        warnings.append(
+            f"pbmask applies to usemask='pb' only; usemask={usemask!r}. Passed through."
         )
     if specmode != "cube" and any(v is not None for v in (nchan, start, width, outframe)):
         warnings.append(
@@ -516,6 +539,9 @@ def run(
         threshold=threshold,
         savemodel=savemodel,
         pblimit=pblimit,
+        cyclefactor=cyclefactor,
+        usemask=usemask,
+        pbmask=pbmask,
         nchan=nchan,
         start=start,
         width=width,
@@ -588,6 +614,9 @@ def run(
         tclean_kwargs["nterms"] = nterms
     if scales is not None:
         tclean_kwargs["scales"] = list(scales)
+    for name, value in (("cyclefactor", cyclefactor), ("usemask", usemask), ("pbmask", pbmask)):
+        if value is not None:
+            tclean_kwargs[name] = value
     if wprojplanes is not None:
         tclean_kwargs["wprojplanes"] = wprojplanes
     if cfcache is not None and gridder == "awproject":
