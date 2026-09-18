@@ -510,7 +510,7 @@ def test_belief_state_disabled_by_default_no_section_no_field(env):
 
 def test_belief_state_enabled_carries_forward_across_turns(env):
     """Turn 2's brief must contain turn 1's belief_state; turn 1's decision
-    supplies it, and only on an accepted outcome."""
+    supplies it."""
     db, key, workdir = env
     script1 = _script(workdir, "exit 0")
     script2 = _script(workdir, "exit 0")
@@ -545,6 +545,51 @@ def test_belief_state_enabled_carries_forward_across_turns(env):
     # both versions remain on disk, versioned not overwritten
     files = sorted((db._run_dir(key) / "belief_state").glob("*.json"))
     assert len(files) == 2
+
+
+def test_belief_state_and_notes_survive_a_turn_that_named_no_script(env):
+    """A hold is the model's most recent synthesis. If the loop drops it, the
+    next turn starts from "none yet" and re-derives the whole inspection —
+    observed on the first real run: three identical turns, no carry."""
+    db, key, workdir = env
+    script2 = _script(workdir, "exit 0")
+    decision1 = {
+        "stage": "set_intents",
+        "tool": "ms_set_intents",
+        "notes": "holding: generated map is wrong for this MS",
+        "belief_state": "J1822-0938 is the phase cal; the tool maps it to target",
+    }
+    decision2 = {"script": str(script2), "tool": "ms_set_intents", "stage": "set_intents"}
+    backend = StubBackend([json.dumps(decision1), json.dumps(decision2)])
+    loop = Loop(
+        db,
+        backend,
+        LocalExecutor(runner="/bin/sh"),
+        poll_interval=0.01,
+        belief_state_enabled=True,
+    )
+    assert loop.step(key)["action"] == "turn_failed"
+    assert db.latest_belief_state(key) == "J1822-0938 is the phase cal; the tool maps it to target"
+    loop.step(key)
+    brief2 = backend.calls[1]
+    assert "J1822-0938 is the phase cal" in brief2
+    assert "none yet" not in brief2
+    assert "notes: holding: generated map is wrong for this MS" in brief2
+    assert "reason: decision names no script that exists" in brief2
+
+
+def test_previous_turn_line_carries_notes_without_belief_state():
+    run = {"ms_path": "/x.ms", "workdir": "/w", "input_path": None, "run_key": "k"}
+    prev = {
+        "stage": "set_intents",
+        "outcome": "failed",
+        "jobs": [],
+        "stop_reason": "decision names no script that exists: None",
+        "decision": {"notes": "holding"},
+    }
+    brief = render_brief(run, {"data": {}}, prev)
+    assert "notes: holding" in brief
+    assert "reason: decision names no script that exists" in brief
 
 
 def test_belief_state_missing_from_decision_keeps_the_prior_one(env):
@@ -704,6 +749,64 @@ def test_done_decision_is_journalled_as_a_turn(tmp_path):
     assert turn["jobs"] == []
     assert "declared the run complete" in turn["stop_reason"]
     db.close()
+
+
+def test_blocked_decision_stops_the_run_for_a_human(tmp_path):
+    """A hold is not a failed turn to retry and not a finished run: the
+    model can name the stage but refuses the script as generated."""
+    db, loop = _done_loop(
+        tmp_path,
+        json.dumps(
+            {
+                "stage": "set_intents",
+                "tool": "ms_set_intents",
+                "blocked": "phase calibrator mapped to OBSERVE_TARGET; tool has no override",
+                "notes": "holding",
+            }
+        ),
+    )
+    result = loop.step("k1")
+    assert result["action"] == "needs_human"
+    assert "no override" in result["reason"]
+    assert db._read_json(db._run_json("k1"))["status"] == "needs_human"
+    turn = db._read_json(db._turn_json("k1", 1))
+    assert turn["outcome"] == "failed"
+    assert turn["stage"] == "set_intents"
+    assert turn["jobs"] == []
+    assert turn["stop_reason"].startswith("model blocked: ")
+    assert loop.step("k1") == {"action": "skipped", "status": "needs_human"}
+    db.close()
+
+
+def test_blocked_wins_over_done(tmp_path):
+    """A model that sets both is halting, not finishing: needs_human, not stopped."""
+    db, loop = _done_loop(
+        tmp_path, json.dumps({"done": True, "blocked": "cannot proceed", "notes": "halt"})
+    )
+    result = loop.step("k1")
+    assert result["action"] == "needs_human"
+    assert db._read_json(db._run_json("k1"))["status"] == "needs_human"
+    db.close()
+
+
+def test_blank_blocked_is_ignored(tmp_path):
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True, "blocked": "  ", "notes": "fin"}))
+    assert loop.step("k1")["action"] == "run_completed"
+    db.close()
+
+
+def test_run_all_stops_on_blocked(tmp_path):
+    db, loop = _done_loop(tmp_path, json.dumps({"blocked": "needs a human", "notes": "x"}))
+    results = loop.run_all(["k1"])
+    assert results["k1"]["action"] == "needs_human"
+    db.close()
+
+
+def test_brief_tells_the_model_about_blocked():
+    run = {"ms_path": "/x.ms", "workdir": "/w", "input_path": None, "run_key": "k"}
+    brief = render_brief(run, {"data": {"next_recommended_step": "set_intents"}}, None)
+    assert "blocked" in brief
+    assert "done=true for this" in brief
 
 
 def test_done_false_is_not_a_completion(tmp_path):

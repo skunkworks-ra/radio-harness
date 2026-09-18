@@ -119,6 +119,11 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
     if backend_kind == "stub":
         backend = StubBackend(backend_cfg.get("responses") or [])
     elif backend_kind in ("api", "claude"):
+        if backend_kind == "claude":
+            # The template ships these for kind="api"; `claude -p` holds its
+            # own credentials, so they are inert here rather than an error.
+            backend_cfg.pop("provider", None)
+            backend_cfg.pop("api_key_env", None)
         # Job logs live under the run root, outside the work directory; the
         # model reads them with read_file, so the run root is a read root.
         backend = make_backend(backend_kind, read_roots=[db.run_root], **backend_cfg)
@@ -340,6 +345,12 @@ def cmd_status(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> i
                 (run_key, last_ordinal),
             ).fetchone()
             line += f"  last: {stage} ({state}, outcome={outcome})"
+            if status == "needs_human":
+                # The turn journal holds why the run stopped; a status line
+                # that says only "needs_human" sends the reader to grep for it.
+                reason = db._read_json(db._turn_json(run_key, last_ordinal)).get("stop_reason")
+                if reason:
+                    line += f"\n    {reason}"
         owner = read_owner(db._run_dir(run_key))
         if owner is not None:
             probe = probe_owner(owner)

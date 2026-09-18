@@ -79,6 +79,13 @@ SUBMIT_DECISION_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "blocked": {
+            "type": "string",
+            "description": (
+                "Why the next stage cannot be run as generated, and what a human "
+                "must change. Ends the run for human attention. Name no script."
+            ),
+        },
         "notes": {"type": "string", "description": "One sentence."},
         "belief_state": {"type": "string"},
     },

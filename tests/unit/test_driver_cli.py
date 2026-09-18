@@ -292,6 +292,21 @@ def test_status_reports_the_owner(project, capsys):
         proc.wait()
 
 
+def test_status_prints_why_a_run_needs_a_human(project, capsys):
+    """A blocked run's reason lives in the turn journal; status must show it,
+    or the reader has to open turns/NNNN.json to learn why the loop stopped."""
+    write_config(
+        project,
+        [json.dumps({"stage": "set_intents", "blocked": "tool maps the phase cal to target"})],
+    )
+    _cli(project, "run", "--ms", str(project / "a.ms"), "--workdir", str(project / "work"))
+    capsys.readouterr()
+    assert _cli(project, "status") == 0
+    out = capsys.readouterr().out
+    assert "status=needs_human" in out
+    assert "model blocked: tool maps the phase cal to target" in out
+
+
 def test_stub_dry_run_then_rebuild(project, capsys):
     """PLAN.md 'stub-backend dry run', then rebuild on its output."""
     write_config(project, [_stage_script(project), DONE])
@@ -412,6 +427,26 @@ def test_default_config_reaches_the_backend(project, monkeypatch):
     loop = build_loop(cfg, db)
     db.close()
     assert loop.backend.kind == "api"
+    assert loop.backend.model == cfg["backend"]["model"]
+
+
+def test_claude_kind_ignores_api_only_keys(project):
+    """Switching the template to kind="claude" without deleting provider and
+    api_key_env must build, not raise TypeError from ClaudeBackend."""
+    import tomllib
+
+    from analyst_driver.cli import build_loop
+
+    _cli(project, "init")
+    with open(project / "config.toml", "rb") as fh:
+        cfg = tomllib.load(fh)
+    assert cfg["backend"]["provider"] and cfg["backend"]["api_key_env"]
+    cfg["backend"]["kind"] = "claude"
+    cfg["driver"]["run_root"] = str(project / "runs")
+    db = DriverDB(project / "runs")
+    loop = build_loop(cfg, db)
+    db.close()
+    assert loop.backend.kind == "claude"
     assert loop.backend.model == cfg["backend"]["model"]
 
 

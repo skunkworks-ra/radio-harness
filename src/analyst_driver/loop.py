@@ -259,6 +259,11 @@ Do this, in order:
    Only you can say this: ms_workflow_status reports "selfcal_or_done" and
    cannot tell the two apart. The declared scope is a stated goal, not a
    rule the loop checks — weigh it against what the data actually needs.
+   If instead the next stage cannot be run as generated — the script is
+   wrong for this data, the tool lacks a needed parameter, or the choice is
+   the user's — call submit_decision with blocked set to the reason and what
+   must change, and name no script. The run stops for a human. Do not use
+   done=true for this: done means finished.
 {belief_state_instruction}"""
 
 _BELIEF_STATE_INSTRUCTION = """\
@@ -346,6 +351,14 @@ def render_brief(
             f" exit_code={last_job.get('exit_code')}"
             f" logs={last_job.get('log_paths')}"
         )
+        # The model's own one-sentence account of that turn, and the loop's
+        # reason if the turn never reached a job. Without these a failed turn
+        # reads as a bare "failed" and the next turn re-derives everything.
+        notes = ((previous_turn.get("decision") or {}).get("notes") or "").strip()
+        if notes:
+            previous += f"\n  notes: {notes}"
+        if not last_job and previous_turn.get("stop_reason"):
+            previous += f"\n  reason: {previous_turn['stop_reason']}"
     belief_enabled = digest is not None
     belief_state_section = (
         _BELIEF_STATE_SECTION.format(
@@ -441,6 +454,20 @@ class Loop:
             return None
         return self.db._read_json(self.db._turn_json(run_key, ordinal))
 
+    def _record_belief(self, run_key: str, ordinal: int, decision: dict | None) -> None:
+        """Journal the turn's belief_state as the latest one, whatever the
+        turn's outcome: a hold or a refused script is still the model's most
+        recent synthesis, and the next brief must carry it or the model
+        re-derives it from scratch. A missing field is not an empty belief —
+        the model may simply not have written one (an older backend, a
+        decision that predates the instruction) — so the prior one stands
+        rather than a blank that would read as "nothing is known"."""
+        if not self.belief_state_enabled:
+            return
+        belief = (decision or {}).get("belief_state")
+        if isinstance(belief, str) and belief.strip():
+            self.db.record_belief_state(run_key, ordinal, belief)
+
     def step(self, run_key: str, *, block: bool = True) -> dict:
         """Advance one run by at most one turn. Returns what happened."""
         run = self.db._read_json(self.db._run_json(run_key))
@@ -473,7 +500,9 @@ class Loop:
         ordinal = self.db.next_ordinal(run_key)
 
         data = status_payload.get("data") if isinstance(status_payload, dict) else {}
-        if (decision or {}).get("done") is True:
+        blocked = (decision or {}).get("blocked")
+        blocked = blocked.strip() if isinstance(blocked, str) else ""
+        if (decision or {}).get("done") is True and not blocked:
             # A terminal marker, not a continuation stage. ms_workflow_status's
             # next_recommended_step answers "what to do next" — borrowing it
             # here mislabels the turn where the model says there is no next,
@@ -505,6 +534,28 @@ class Loop:
             tokens_cache_creation=result.tokens_cache_creation,
             tokens_out=result.tokens_out,
         )
+
+        self._record_belief(run_key, ordinal, decision)
+
+        if blocked:
+            # The model can name the next stage but refuses to run it as
+            # generated: a wrong script, a missing tool parameter, a choice the
+            # skill leaves to the user. Retrying would replay the same brief,
+            # so the run stops for a human, with the reason where `status`
+            # shows it. The turn advanced nothing, hence "failed"; the run
+            # status carries the distinction from an ordinary failed turn.
+            self.db.record_turn(
+                run_key,
+                ordinal,
+                jobs=[],
+                extras={**extras, "stop_reason": f"model blocked: {blocked}"},
+                **common,
+            )
+            self.db.complete_turn(
+                run_key, ordinal, outcome="failed", metrics=extras["harvested_metrics"]
+            )
+            self.db.set_run_status(run_key, "needs_human")
+            return {"action": "needs_human", "ordinal": ordinal, "reason": blocked}
 
         if (decision or {}).get("done") is True:
             # The model declares the reduction finished; the driver records it
@@ -612,15 +663,6 @@ class Loop:
             wall_time_s=_wall_time(job.get("submitted_at"), job.get("finished_at")),
         )
         self._adopt_ms(run_key, artifacts)
-        if outcome == "accepted" and self.belief_state_enabled:
-            belief = decision.get("belief_state")
-            # A missing field is not the same as an empty belief: the model
-            # may simply not have written one this turn (e.g. an older
-            # backend, or a decision that predates the instruction). Leave
-            # the prior belief as the most recent one rather than recording
-            # a blank that would read as "nothing is known" to the next turn.
-            if isinstance(belief, str) and belief.strip():
-                self.db.record_belief_state(run_key, turn["ordinal"], belief)
         set_owner_job(self.db._run_dir(run_key), None)
         return {
             "action": "completed",
