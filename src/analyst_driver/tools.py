@@ -343,6 +343,19 @@ class ToolRegistry:
         if call.args is None:
             raw = (call.raw_args or "")[:200]
             return "R4", f"arguments for {call.name} did not parse as a JSON object: {raw!r}"
+        if call.name == SUBMIT_DECISION_NAME:
+            # The loop reads decision["script"]; an unrecorded key hides it.
+            # Observed live 2026-09-23 (muse-glimmer): the whole decision sent
+            # under "params" failed two turns with "names no script".
+            allowed = set(SUBMIT_DECISION_SCHEMA["properties"])
+            unknown = sorted(set(call.args) - allowed)
+            missing = [k for k in SUBMIT_DECISION_SCHEMA["required"] if k not in call.args]
+            if unknown or missing:
+                return "R4", (
+                    f"{SUBMIT_DECISION_NAME} takes its fields at the top level, not under "
+                    f"'params'. Unknown keys: {unknown}; missing: {missing}. "
+                    f"Allowed keys: {sorted(allowed)}. Call it again."
+                )
         if self._entries[call.name].cls == "script":
             params = call.args.get("params")
             if not isinstance(params, dict):

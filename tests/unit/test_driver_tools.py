@@ -321,6 +321,26 @@ def test_submit_decision_records_and_does_not_run(fake):
     assert server.calls == []
 
 
+def test_submit_decision_under_params_is_rejected_not_recorded(fake):
+    """Observed live, muse-glimmer: the decision wrapped in "params" hid the
+    script from the loop. Rejected in-turn so the model can call again."""
+    reg, _, turn, _ = fake
+    dec = {"script": "/w/s.py", "stage": "setjy", "notes": "ok"}
+    res = reg.dispatch(_call(SUBMIT_DECISION_NAME, {"params": dec}), turn)
+    assert res.is_error and "'params'" in res.text
+    assert turn.decision is None and turn.rejections["R4"] == 1
+
+    res = reg.dispatch(_call(SUBMIT_DECISION_NAME, dec, id_="c2"), turn)
+    assert not res.is_error and turn.decision == dec
+
+
+def test_submit_decision_missing_notes_is_rejected(fake):
+    reg, _, turn, _ = fake
+    res = reg.dispatch(_call(SUBMIT_DECISION_NAME, {"script": "/w/s.py"}), turn)
+    assert res.is_error and "missing: ['notes']" in res.text
+    assert turn.decision is None
+
+
 # --------------------------------------------------------------- read_file
 
 
