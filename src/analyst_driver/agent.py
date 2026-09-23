@@ -114,6 +114,7 @@ class Agent:
                 "rejections": dict(turn.rejections),
                 "files_read": list(turn.files_read),
                 "truncated_results": turn.truncated_results,
+                "flat_args": turn.flat_args,
                 "decision_source": turn.decision_source,
                 "error": error,
             }

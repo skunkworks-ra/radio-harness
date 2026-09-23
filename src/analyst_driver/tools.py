@@ -126,6 +126,8 @@ class TurnState:
     rejections: Counter = field(default_factory=Counter)
     files_read: list[str] = field(default_factory=list)
     truncated_results: int = 0
+    #: Calls to a ``params`` tool that sent the fields flat; wrapped at dispatch.
+    flat_args: int = 0
     transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -190,6 +192,8 @@ class _Entry:
     spec: ToolSpec
     cls: ToolClass
     server: Any  # FastMCP, or None for harness tools
+    #: The schema's only top-level property is ``params``.
+    wrapped: bool = False
 
 
 class ToolRegistry:
@@ -209,7 +213,10 @@ class ToolRegistry:
                 schema = inline_refs(t.inputSchema)
                 spec = ToolSpec(name=t.name, description=t.description or "", input_schema=schema)
                 self._entries[t.name] = _Entry(
-                    spec=spec, cls=self._classify_mcp(t, schema), server=server
+                    spec=spec,
+                    cls=self._classify_mcp(t, schema),
+                    server=server,
+                    wrapped=list(schema.get("properties") or {}) == ["params"],
                 )
         self._entries[READ_FILE_NAME] = _Entry(
             spec=ToolSpec(READ_FILE_NAME, self._read_file_description(), READ_FILE_SCHEMA),
@@ -272,6 +279,7 @@ class ToolRegistry:
     # ----------------------------------------------------------- dispatch
 
     def dispatch(self, call: ToolCall, turn: TurnState) -> ToolResult:
+        call = self._wrap_flat_args(call, turn)
         rejected = self._policy(call, turn)
         if rejected is not None:
             rule, why = rejected
@@ -313,6 +321,21 @@ class ToolRegistry:
             }
         )
         return ToolResult(call.id, shown, is_error=is_error)
+
+    def _wrap_flat_args(self, call: ToolCall, turn: TurnState) -> ToolCall:
+        """Put flat fields under ``params`` for a tool that takes them there.
+
+        Counted and recorded, not silent: sending the fields flat is a
+        measured model error, even though the call is allowed to proceed.
+        """
+        entry = self._entries.get(call.name)
+        if entry is None or not entry.wrapped or call.args is None or "params" in call.args:
+            return call
+        turn.flat_args += 1
+        turn.transcript.append({"type": "flat_args_wrapped", "tool": call.name, "id": call.id})
+        return ToolCall(
+            id=call.id, name=call.name, args={"params": call.args}, raw_args=call.raw_args
+        )
 
     def _policy(self, call: ToolCall, turn: TurnState) -> tuple[str, str] | None:
         if call.name not in self._entries:

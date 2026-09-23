@@ -389,3 +389,44 @@ def test_read_file_description_names_skills(fake, skill_tree):
     assert "alpha-skill, beta-skill" in spec.description
     assert "not-a-skill" not in spec.description
     assert str(skill_tree) in spec.description
+
+
+# ------------------------------------------- flat arguments (params wrapper)
+# Observed live, 2026-09-23, gpt-oss-120b on Jetstream: 23 of 24 CASA tool
+# calls in one turn sent the fields flat instead of under "params"; every
+# one failed validation, and only the script-tool case was counted (R4).
+
+
+def test_flat_args_reach_a_params_wrapped_read_only_tool(fake):
+    reg, server, turn, _ = fake
+    res = reg.dispatch(_call("fake_inspect", {"ms_path": "/a"}), turn)
+    assert not res.is_error
+    assert server.calls == [("fake_inspect", {"params": {"ms_path": "/a"}})]
+    assert turn.flat_args == 1
+    assert turn.transcript[0] == {"type": "flat_args_wrapped", "tool": "fake_inspect", "id": "c1"}
+
+
+def test_flat_args_reach_a_params_wrapped_script_tool(fake):
+    reg, server, turn, _ = fake
+    res = reg.dispatch(_call("fake_script", {"ms_path": "/a", "workdir": "/w"}), turn)
+    assert not res.is_error
+    assert turn.rejections["R4"] == 0
+    assert turn.flat_args == 1
+    assert server.calls == [
+        ("fake_script", {"params": {"ms_path": "/a", "workdir": "/w", "execute": False}})
+    ]
+
+
+def test_wrapped_args_are_not_counted_as_flat(fake):
+    reg, server, turn, _ = fake
+    reg.dispatch(_call("fake_inspect", {"params": {"ms_path": "/a"}}), turn)
+    reg.dispatch(_call(READ_FILE_NAME, {"path": "01-detail.md"}, id_="c2"), turn)
+    assert turn.flat_args == 0
+    assert server.calls == [("fake_inspect", {"params": {"ms_path": "/a"}})]
+
+
+def test_recorded_flat_call_reaches_the_real_tool(real: ToolRegistry, tmp_path: Path):
+    turn = TurnState(workdir=tmp_path)
+    res = real.dispatch(_call("ms_field_list", {"ms_path": str(tmp_path / "nope.ms")}), turn)
+    assert "validation error" not in res.text
+    assert '"MS_NOT_FOUND"' in res.text
