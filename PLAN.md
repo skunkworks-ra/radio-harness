@@ -276,7 +276,7 @@ paper making a quality claim, a human control run remains the only real answer.
 ### The stage vocabulary needs reconciling — with the ALMA ladder, not before it
 
 `ms_workflow_status` emits `import_asdm`, `set_intents`, `apply_preflag`,
-`generate_priorcals`, `initial_bandpass`, `apply_initial_rflag_then_applycal`,
+`generate_priorcals`, `setjy`, `initial_bandpass`, `initial_rflag`,
 `delay_bandpass_gain`, `first_image`, `selfcal_or_done`, and two
 `probe_failed_*` labels. `.claude/skills/radio-interferometry/00-playbook.md`
 states the same transitions keyed on human-language states. **The two sets do

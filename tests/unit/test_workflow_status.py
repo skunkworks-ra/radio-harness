@@ -86,7 +86,7 @@ def test_unreadable_main_table_yields_unavailable_corrected(fake_ms, monkeypatch
     (ms / "STATE").mkdir()
     # Advance past every earlier stage via the stage log, so the derivation
     # actually reaches the CORRECTED_DATA branch instead of stopping before it.
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass")
+    _log(workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_bandpass")
     cal_ms = workdir / "calibrators.ms"
     cal_ms.mkdir()
     (cal_ms / "table.info").write_text("Type = Measurement Set\n")
@@ -190,7 +190,9 @@ def test_caller_chosen_caltable_names_are_recognised(fake_ms, monkeypatch):
     monkeypatch.setattr(
         workflow_status, "open_table", _fake_main_table(colnames=["DATA", "CORRECTED_DATA"])
     )
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(
+        workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_bandpass", "initial_rflag"
+    )
     for stage, product in (
         ("gaincal", "/w/delay.K"),
         ("gaincal", "/w/gain.g"),
@@ -221,7 +223,9 @@ def test_corrected_is_reported_for_both_measurement_sets(fake_ms, monkeypatch):
 
     (ms / "STATE").mkdir()
     monkeypatch.setattr(workflow_status, "open_table", _open)
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(
+        workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_bandpass", "initial_rflag"
+    )
 
     result = _run(ms, workdir)
     assert result["data"]["corrected_populated_calibrators"]["value"] is True
@@ -245,12 +249,41 @@ def test_final_solves_advance_once_corrected_and_flagged(fake_ms, monkeypatch):
         return _table(colnames=["DATA"])
 
     monkeypatch.setattr(workflow_status, "open_table", _open)
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    _log(workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_rflag")
     # initial_bandpass's applycal writes CORRECTED on calibrators.ms and
     # records that MS as its product; that row is what advances the stage.
     _log(workdir, "initial_bandpass", product=str(cal_ms))
 
     assert _run(ms, workdir)["data"]["next_recommended_step"] == "delay_bandpass_gain"
+
+
+def test_setjy_comes_before_initial_bandpass(fake_ms, monkeypatch):
+    """Initial rflag flags CORRECTED - MODEL, so the model must exist first."""
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+    _log(workdir, "set_intents", "preflag", "priorcals")
+
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "setjy"
+
+
+def test_setjy_missing_after_initial_bandpass_still_recommends_setjy(fake_ms, monkeypatch):
+    """The fix-B runs: initial_bandpass ran without setjy, rflag then refused."""
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass")
+
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "setjy"
+
+
+def test_initial_bandpass_follows_setjy(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+    _log(workdir, "set_intents", "preflag", "priorcals", "setjy")
+
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "initial_bandpass"
 
 
 def test_initial_bandpass_recorded_on_another_product_does_not_count(fake_ms, monkeypatch):
@@ -267,11 +300,11 @@ def test_initial_bandpass_recorded_on_another_product_does_not_count(fake_ms, mo
         return _table(colnames=["DATA", "CORRECTED_DATA"])
 
     monkeypatch.setattr(workflow_status, "open_table", _open)
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    _log(workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_rflag")
     _log(workdir, "initial_bandpass", product=str(workdir / "BP0.b"))
 
     result = _run(ms, workdir)
-    assert result["data"]["next_recommended_step"] == "apply_initial_rflag_then_applycal"
+    assert result["data"]["next_recommended_step"] == "initial_rflag"
     assert result["data"]["applycal_recorded_calibrators"]["value"] is False
 
 
@@ -318,6 +351,7 @@ def test_disagreement_between_log_and_ms_is_reported_not_resolved(fake_ms, monke
         "set_intents",
         "preflag",
         "priorcals",
+        "setjy",
         "initial_bandpass",
         "initial_rflag",
         "gaincal",
@@ -349,7 +383,7 @@ def test_stale_corrected_column_does_not_pass_for_applycal(fake_ms, monkeypatch)
         return _table(colnames=["DATA", "CORRECTED_DATA"])
 
     monkeypatch.setattr(workflow_status, "open_table", _open)
-    _log(workdir, "set_intents", "preflag", "priorcals", "initial_rflag")
+    _log(workdir, "set_intents", "preflag", "priorcals", "setjy", "initial_rflag")
     _log(workdir, "initial_bandpass", product=str(cal_ms))
     _log(workdir, "gaincal", "bandpass", "fluxscale")
     _log(workdir, "applycal", product=str(cal_ms))

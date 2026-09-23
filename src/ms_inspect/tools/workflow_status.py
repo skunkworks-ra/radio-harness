@@ -41,6 +41,7 @@ _IMPORT = "import_asdm"
 _INTENTS = "set_intents"
 _PREFLAG = "preflag"
 _PRIORCALS = "priorcals"
+_SETJY = "setjy"
 _INITIAL_BANDPASS = "initial_bandpass"
 _INITIAL_RFLAG = "initial_rflag"
 _APPLYCAL = "applycal"
@@ -164,12 +165,14 @@ def run(ms_path: str, workdir: str) -> dict:
         next_step = "apply_preflag"
     elif _PRIORCALS not in done:
         next_step = "generate_priorcals"
+    elif _SETJY not in done:
+        next_step = _SETJY
     elif _INITIAL_BANDPASS not in done:
         next_step = _INITIAL_BANDPASS
     elif corrected_calibrators is None:
         next_step = "probe_failed_corrected_calibrators"
     elif _INITIAL_RFLAG not in done or not applycal_calibrators_done:
-        next_step = "apply_initial_rflag_then_applycal"
+        next_step = _INITIAL_RFLAG
     elif len(final_solves_done) < len(_FINAL_SOLVES):
         next_step = "delay_bandpass_gain"
     elif corrected_target is None:
