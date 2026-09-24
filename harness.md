@@ -49,6 +49,52 @@ What that looked like in practice (muse-glimmer, calibration run, 14 turns):
   already in `analyst.db` before the turn started. The brief shows stage
   names only, not those recorded values.
 
+## 2b. Measured: what Claude Code got in capture r3 (2026-09-24)
+
+Section 1 was listed from a development session, not a reduction. This is
+the recording of a reduction: Sonnet, full 3C391 prompt, captured by
+`analyst_driver.capture` at `f9c7368`.
+
+- Run: `/var/mnt/fast/harness_capture/3c391_sonnet_r3` (`capture.db`, capture 1).
+- Flags: `--plugin-dir <repo> --setting-sources project --add-dir <repo>/skills <run>/ms
+  --allowedTools Skill mcp__ms-*__*`, cwd `<run>/work`, `ANALYST_MS_PATH` set, hooks on.
+- Valid through event 626 (precal, calibration, post-cal flagging, imaging setup).
+  Imaging broke on Claude Code's 1800 s MCP idle cutoff
+  (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); no restored image.
+- 88 requests, 103 tool calls, 87 of them MCP.
+
+The harness column is copied from section 2, not re-verified against code.
+
+| # | Layer | Claude Code (r3, measured) | Harness per turn (section 2) | Gap |
+|---|---|---|---|---|
+| 1 | Instructions | 27,453-char coding-agent system prompt, environment block (cwd, added dirs, model, date), subagent list | 7-line preamble | CC's is mostly generic coding text |
+| 2 | Global `CLAUDE.md` | absent | absent | none |
+| 3 | Project `CLAUDE.md` | absent (cwd outside repo: the plugin-user view) | fragments in the `SKILL.md` bodies | about even |
+| 4 | Memory | auto-memory instructions only, memory dir empty | none | negligible |
+| 5 | Skill index | plugin skills listed by name only, no description | description stripped | none |
+| 6 | Skill bodies | model pulls them: 2 `Skill` calls, 6 sub-files read once each (01-workflow, 01-macro-stages, 07, 10, 11, 13), kept in context | both `SKILL.md` bodies pasted every turn; sub-files via `read_file`, re-read every turn | once and kept vs. every turn |
+| 7 | Tools | 79 schemas: 26 builtin (82,961 chars) + 53 MCP (78,889 chars) | about 50 CASA tools + `read_file` | CC has Bash and Read anywhere; 16 non-MCP calls in r3 |
+| 8 | Request | one prompt for the whole reduction, "make the choices yourself" | one-line scope string per turn | harness has no overall goal |
+| 9 | Conversation | persistent across all 88 requests; one compaction at request 25 (about 166k tokens): 13,582-token summary, restart at 73.6k tokens with recently read files re-injected (22,657 chars) | fresh every turn | largest gap |
+| 10 | Owner | none (prompt said unavailable) | none; `blocked` ends the run | none |
+| 11 | Hooks | `sense.sh` injects `ms_workflow_status` (1,611 chars) at skill load; `gate.sh` checks every write | `loop.sense()` makes the same call (per `hooks/sense.py` docstring) | probably none, not compared side by side |
+| 12 | Tool errors | pydantic validation text returned verbatim; Sonnet retried (event 398, `params` sent as a string) | not recorded | unknown |
+
+Gaps that matter, in order:
+
+1. Within-run memory (9). CC keeps everything and summarizes when full; the
+   harness starts from zero each turn. Consistent with muse re-reading
+   `01-macro-stages.md` 15 times.
+2. Skill delivery (6). CC's model chooses what to read and keeps it; the
+   harness pastes the bodies but leaves sub-files to be re-fetched.
+3. Builtin tools (7). Sonnet used Bash to inspect files and processes; the
+   harness has no equivalent. Small in r3 (16 calls).
+
+Model behavior worth keeping from r3: caught the `usescratch=False` setjy
+default through `ms_residual_stats` before rflag refused (run 1 without
+skills hit the refusal); picked tclean `threshold` 0.02 mJy against a run-1
+RMS of 0.636 mJy, `niter` 50000.
+
 ## 3. Presenting it the way a person presents it to Claude Code
 
 1. **Project context file** in the system prompt: the contract, error codes
