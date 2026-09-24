@@ -31,10 +31,10 @@ Listed from what was in context in the session that wrote this file.
 | 2 | no | |
 | 3 | no; fragments survive inside the two `SKILL.md` bodies | |
 | 4 | no; belief state is the per-run analogue and is off | `PLAN_BELIEF_STATE.md` |
-| 5 | no; frontmatter `description` is stripped | `skills.py:9` |
-| 6 | both `SKILL.md` bodies always pasted in; 18 sub-files (4,093 lines) through `read_file` | `skills.py:55` |
-| 7 | about 50 CASA tools; `read_file` confined to the skill root, workdir and run directory; no code or docs | `tools.py:391` |
-| 8 | a one-line scope string ("calibration only") | `loop.py:231` |
+| 5 | no; frontmatter `description` is stripped | `skills.py:31-39` |
+| 6 | both `SKILL.md` bodies always pasted in; 18 sub-files (3,950 lines at `592ebd8`) through `read_file` | `skills.py:55-63` |
+| 7 | every tool the three MCP servers list (53 in r3) plus `read_file` and `submit_decision`; `read_file` confined to the skill root, workdir and run root; no code or docs | `tools.py:210-236`, `tools.py:404-405`, `cli.py:129` |
+| 8 | a per-turn brief: input path, MS, workdir, telescope, free space, a one-line scope, optional belief state, the full `ms_workflow_status` JSON, the previous turn, ordered instructions. No overall goal beyond the scope line | `loop.py:222-240` |
 | 9 | none; history starts fresh every turn | `agent.py:44` |
 | 10 | none; `blocked` ends the run | `loop.py:540` |
 
@@ -63,7 +63,8 @@ the recording of a reduction: Sonnet, full 3C391 prompt, captured by
   (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); no restored image.
 - 88 requests, 103 tool calls, 87 of them MCP.
 
-The harness column is copied from section 2, not re-verified against code.
+The harness column is from section 2, re-verified against code at `592ebd8`
+(line refs and rows 7 and 8 corrected there).
 
 | # | Layer | Claude Code (r3, measured) | Harness per turn (section 2) | Gap |
 |---|---|---|---|---|
@@ -74,10 +75,10 @@ The harness column is copied from section 2, not re-verified against code.
 | 5 | Skill index | plugin skills listed by name only, no description | description stripped | none |
 | 6 | Skill bodies | model pulls them: 2 `Skill` calls, 6 sub-files read once each (01-workflow, 01-macro-stages, 07, 10, 11, 13), kept in context | both `SKILL.md` bodies pasted every turn; sub-files via `read_file`, re-read every turn | once and kept vs. every turn |
 | 7 | Tools | 79 schemas: 26 builtin (82,961 chars) + 53 MCP (78,889 chars) | about 50 CASA tools + `read_file` | CC has Bash and Read anywhere; 16 non-MCP calls in r3 |
-| 8 | Request | one prompt for the whole reduction, "make the choices yourself" | one-line scope string per turn | harness has no overall goal |
+| 8 | Request | one prompt for the whole reduction, "make the choices yourself" | per-turn brief with measured state, previous turn, and a one-line scope | harness gives more state per turn, less goal |
 | 9 | Conversation | persistent across all 88 requests; one compaction at request 25 (about 166k tokens): 13,582-token summary, restart at 73.6k tokens with recently read files re-injected (22,657 chars) | fresh every turn | largest gap |
 | 10 | Owner | none (prompt said unavailable) | none; `blocked` ends the run | none |
-| 11 | Hooks | `sense.sh` injects `ms_workflow_status` (1,611 chars) at skill load; `gate.sh` checks every write | `loop.sense()` makes the same call (per `hooks/sense.py` docstring) | probably none, not compared side by side |
+| 11 | Hooks | `sense.sh` injects `ms_workflow_status` (1,611 chars) at skill load; `gate.sh` checks every write | the brief carries the full `ms_workflow_status` JSON every turn (`loop.py:233`) | none on content; CC gets it once per skill load, the harness every turn |
 | 12 | Tool errors | pydantic validation text returned verbatim; Sonnet retried (event 398, `params` sent as a string) | not recorded | unknown |
 
 Gaps that matter, in order:
