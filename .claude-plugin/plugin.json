@@ -11,7 +11,7 @@
   "license": "GPL-3.0",
   "keywords": ["radio-astronomy", "interferometry", "CASA", "orchestration", "analyst-driver"],
   "mcpServers": "./.mcp.json",
-  "skills": "./.claude/skills/",
+  "skills": "./skills/",
   "commands": ["./.claude/commands/"],
   "hooks": "./hooks.json"
 }
