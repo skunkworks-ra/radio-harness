@@ -29,6 +29,7 @@ Usage::
     python -m analyst_driver.capture run --db capture.db --label NAME \\
         --prompt-file prompt.txt [--cwd DIR] -- <extra claude args>
     python -m analyst_driver.capture report --db capture.db [--capture ID] --out report.md
+    python -m analyst_driver.capture context --db capture.db [--capture ID] --out context.md
     python -m analyst_driver.capture show --db capture.db --request ID
 """
 
@@ -756,6 +757,128 @@ def report(db: CaptureDB, capture_id: int) -> str:
     return "\n".join(out) + "\n"
 
 
+# -- context ------------------------------------------------------------------
+
+
+def _content_text(body: Any) -> str:
+    if isinstance(body, str):
+        return body
+    if isinstance(body, list):
+        return "\n".join(
+            _text_of(b) if isinstance(b, dict) and b.get("type") == "text" else json.dumps(b)
+            for b in body
+        )
+    return json.dumps(body)
+
+
+def context(db: CaptureDB, capture_id: int) -> str:
+    """Everything the main thread's model was given, in order, as plain text.
+
+    The main thread is the largest (model, system prompt) group. Its messages
+    are walked across all its requests, so text dropped by a compaction still
+    appears. A message is resent with changed cache markers, so each injected
+    text is shown once by content and each tool result once by tool-use id. Sections: prompt, system prompt
+    size, then in order every injected user text (skill bodies, hook output,
+    reminders) and every tool call with its full arguments and result, then
+    the full schema of each tool called.
+    """
+    cap = db.conn.execute(
+        "SELECT label, prompt_sha FROM captures WHERE id = ?", (capture_id,)
+    ).fetchone()
+    if cap is None:
+        raise KeyError(capture_id)
+    label, prompt_sha = cap
+    reqs = db.conn.execute(
+        "SELECT ordinal, model, system_json, tools_json, messages_json, response_sha"
+        " FROM requests WHERE capture_id = ? AND messages_json IS NOT NULL ORDER BY ordinal",
+        (capture_id,),
+    ).fetchall()
+    groups: dict[tuple, list] = {}
+    for r in reqs:
+        groups.setdefault((r[1], r[2]), []).append(r)
+    if not groups:
+        return f"# Context of capture {capture_id}: {label}\n\nNo Messages requests recorded.\n"
+    (model, sysj), main = max(groups.items(), key=lambda kv: len(kv[1]))
+
+    out: list[str] = []
+    w = out.append
+    w(f"# Context of capture {capture_id}: {label}\n")
+    w(f"Main thread: model `{model}`, {len(main)} requests.\n")
+    w("## Prompt\n")
+    prompt = db.get(prompt_sha).decode() if prompt_sha else "(not recorded)"
+    w("````text\n" + prompt + "\n````\n")
+    ref = json.loads(sysj) if sysj else []
+    sys_blocks = [db.get_json(s) for s in ref] if isinstance(ref, list) else [db.get_json(ref)]
+    w("## System prompt\n")
+    w(
+        f"{len(sys_blocks)} blocks, {sum(len(_text_of(b)) for b in sys_blocks)} chars."
+        " Full text: `report`.\n"
+    )
+
+    # Every message and every reply, each distinct one once, in order.
+    seen: set[str] = set()
+    items: list[tuple[int, dict]] = []
+    for ordn, _m, _s, _t, msgj, resp_sha in main:
+        for sha in json.loads(msgj):
+            if sha not in seen:
+                seen.add(sha)
+                items.append((ordn, db.get_json(sha)))
+        if resp_sha and resp_sha not in seen:
+            seen.add(resp_sha)
+            items.append((ordn, {**db.get_json(resp_sha), "role": "assistant"}))
+
+    w("## Sequence\n")
+    calls: dict[str, dict] = {}
+    called: list[str] = []
+    shown_text: set[str] = {prompt.strip()}
+    shown_results: set[str] = set()
+    step = 0
+    for ordn, m in items:
+        content = m.get("content")
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+        for b in blocks:
+            bt = b.get("type")
+            if m.get("role") != "assistant" and bt == "text":
+                t = b.get("text", "")
+                if t.strip() in shown_text:
+                    continue
+                shown_text.add(t.strip())
+                step += 1
+                role = m.get("role")
+                w(f"### {step}. Injected text, role {role} (request {ordn}), {len(t)} chars\n")
+                w("````text\n" + t + "\n````\n")
+            elif bt == "tool_use":
+                calls[b.get("id")] = b
+                if b.get("name") not in called:
+                    called.append(b.get("name"))
+            elif bt == "tool_result":
+                if b.get("tool_use_id") in shown_results:
+                    continue
+                shown_results.add(b.get("tool_use_id"))
+                use = calls.get(b.get("tool_use_id"), {})
+                body = _content_text(b.get("content"))
+                err = " ERROR" if b.get("is_error") else ""
+                step += 1
+                w(f"### {step}. Tool call `{use.get('name', '?')}` (request {ordn}){err}\n")
+                args = json.dumps(use.get("input"), indent=1, ensure_ascii=False)
+                w("Arguments:\n\n````json\n" + args + "\n````\n")
+                w(f"Result, {len(body)} chars:\n\n````text\n" + body + "\n````\n")
+
+    tools = dict(json.loads(main[-1][3] or "[]"))
+    w("## Schemas of the tools called\n")
+    for name in called:
+        spec = db.get_json(tools[name]) if name in tools else "(not in the offered set)"
+        w(
+            f"### `{name}`\n\n````json\n"
+            + json.dumps(spec, indent=1, ensure_ascii=False)
+            + "\n````\n"
+        )
+    others = [n for n in tools if n not in called]
+    w(f"## Tools offered but not called ({len(others)})\n")
+    w(", ".join(f"`{n}`" for n in others) + "\n")
+    return "\n".join(out) + "\n"
+
+
 # -- CLI ----------------------------------------------------------------------
 
 
@@ -785,6 +908,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--capture", type=int, default=None, help="default: the latest")
     p.add_argument("--out", type=Path, default=None)
 
+    p = sub.add_parser(
+        "context", help="write the prompt, injected skill text, tool calls and schemas, in order"
+    )
+    p.add_argument("--db", required=True, type=Path)
+    p.add_argument("--capture", type=int, default=None, help="default: the latest")
+    p.add_argument("--out", type=Path, default=None)
+
     p = sub.add_parser("show", help="print one request body, rebuilt from its parts")
     p.add_argument("--db", required=True, type=Path)
     p.add_argument("--request", required=True, type=int)
@@ -803,9 +933,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     db = CaptureDB(args.db)
     try:
-        if args.command == "report":
+        if args.command in ("report", "context"):
             cid = args.capture or db.conn.execute("SELECT MAX(id) FROM captures").fetchone()[0]
-            text = report(db, cid)
+            text = (report if args.command == "report" else context)(db, cid)
             if args.out:
                 args.out.write_text(text)
             else:

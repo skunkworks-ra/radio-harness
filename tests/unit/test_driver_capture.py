@@ -267,3 +267,45 @@ def test_run_capture_with_fake_claude(tmp_path, upstream):
     assert reconstruct(db, rid) == BODY
     db.close()
     _assert_no_secret(tmp_path / "c.db")
+
+
+def test_context_lists_injected_text_calls_and_schemas(tmp_path):
+    from analyst_driver.capture import context
+
+    db = CaptureDB(tmp_path / "c.db")
+    cid = db.new_capture(
+        label="t",
+        started_at="now",
+        cwd="/",
+        argv_json="[]",
+        env_json="{}",
+        prompt_sha=db.put(b"run priorcals", "prompt"),
+    )
+    tool = {"name": "mcp__ms-modify__ms_x", "description": "d", "input_schema": {"type": "object"}}
+    unused = {"name": "Bash", "description": "b", "input_schema": {"type": "object"}}
+    use = {"type": "tool_use", "id": "u1", "name": "mcp__ms-modify__ms_x", "input": {"a": 1}}
+    msgs1 = [{"role": "user", "content": [{"type": "text", "text": "run priorcals"}]}]
+    msgs2 = msgs1 + [
+        {"role": "assistant", "content": [use]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "u1", "content": "RESULT-TEXT"},
+                {"type": "text", "text": "SKILL-BODY"},
+            ],
+        },
+        {"role": "system", "content": [{"type": "text", "text": "HOOK-OUTPUT"}]},
+    ]
+    for msgs in (msgs1, msgs2):
+        rid = db.new_request(cid, "POST", "/v1/messages", {})
+        body = {"model": "m", "system": "S", "tools": [tool, unused], "messages": msgs}
+        store_body(db, rid, json.dumps(body).encode())
+    text = context(db, cid)
+    db.close()
+    assert "run priorcals" in text
+    assert "SKILL-BODY" in text
+    assert "RESULT-TEXT" in text and '"a": 1' in text
+    assert text.index("### `mcp__ms-modify__ms_x`") > text.index("## Schemas")
+    assert "Tools offered but not called (1)" in text and "`Bash`" in text
+    assert "HOOK-OUTPUT" in text
+    assert text.count("Injected text") == 2  # the prompt is not repeated
