@@ -61,7 +61,8 @@ the recording of a reduction: Sonnet, full 3C391 prompt, captured by
 - Valid through event 626 (precal, calibration, post-cal flagging, imaging setup).
   Imaging broke on Claude Code's 1800 s MCP idle cutoff
   (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); no restored image.
-- 88 requests, 103 tool calls, 87 of them MCP.
+- 88 requests (79 to the model, 9 `count_tokens`), 103 tool calls, 87 of them MCP.
+- Every input, per stage, as text: `<run>/r3_inputs_by_stage.txt`, written by `<run>/dump_stages.py`.
 
 The harness column is from section 2, re-verified against code at `592ebd8`
 (line refs and rows 7 and 8 corrected there).
@@ -76,7 +77,7 @@ The harness column is from section 2, re-verified against code at `592ebd8`
 | 6 | Skill bodies | model pulls them: 2 `Skill` calls, 6 sub-files read once each (01-workflow, 01-macro-stages, 07, 10, 11, 13), kept in context | both `SKILL.md` bodies pasted every turn; sub-files via `read_file`, re-read every turn | once and kept vs. every turn |
 | 7 | Tools | 79 schemas: 26 builtin (82,961 chars) + 53 MCP (78,889 chars) | about 50 CASA tools + `read_file` | CC has Bash and Read anywhere; 16 non-MCP calls in r3 |
 | 8 | Request | one prompt for the whole reduction, "make the choices yourself" | per-turn brief with measured state, previous turn, and a one-line scope | harness gives more state per turn, less goal |
-| 9 | Conversation | persistent across all 88 requests; one compaction at request 25 (about 166k tokens): 13,582-token summary, restart at 73.6k tokens with recently read files re-injected (22,657 chars) | fresh every turn | largest gap |
+| 9 | Conversation | persistent across 79 model requests (plus 9 `count_tokens` calls); three compactions, at requests 25, 59 and 77 (at 165,900, 165,013 and 128,868 cached tokens): each a summary of about 13k tokens, then a restart at 73.6k cached tokens with the summary and the recently read skill files re-attached | fresh every turn | largest gap |
 | 10 | Owner | none (prompt said unavailable) | none; `blocked` ends the run | none |
 | 11 | Hooks | `sense.sh` injects `ms_workflow_status` (1,611 chars) at skill load; `gate.sh` checks every write | the brief carries the full `ms_workflow_status` JSON every turn (`loop.py:233`) | none on content; CC gets it once per skill load, the harness every turn |
 | 12 | Tool errors | pydantic validation text returned verbatim; Sonnet retried (event 398, `params` sent as a string) | not recorded | unknown |
